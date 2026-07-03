@@ -182,15 +182,53 @@
 
   function safeRate(num, den) { return den > 0 ? num / den : 0; }
 
-  function buildTrailingSeries(rows, planningMonth, n, asOf) {
+  function getReferenceMonth(asOf) {
+    // The most recent month that is fully complete as of asOf.
+    var lastDay = daysInMonth(asOf.year, asOf.month);
+    if (asOf.day >= lastDay) return monthKey(asOf.year, asOf.month);
+    return addMonths(monthKey(asOf.year, asOf.month), -1);
+  }
+
+  // Always returns n *complete* months ending at the latest complete
+  // month as of asOf — independent of how far away the planning month
+  // is. A month still in progress is never included here: mixing a
+  // 1-2 day partial month into the same average as full months
+  // systematically understates rates (a lead created today hasn't had
+  // time to reach MS yet) and volumes (early-month days are rarely
+  // representative of the full month's pace).
+  function buildTrailingSeries(rows, asOf, n) {
+    var referenceMonth = getReferenceMonth(asOf);
     var months = [];
-    for (var i = n; i >= 1; i--) {
-      var mk = addMonths(planningMonth, -i);
+    for (var i = n - 1; i >= 0; i--) {
+      var mk = addMonths(referenceMonth, -i);
       var p = parseMonthKey(mk);
-      var fig = getMonthFigure(rows, p.year, p.month, asOf);
-      months.push({ monthKey: mk, figure: fig });
+      var totals = sumMonth(rows, p.year, p.month, null);
+      months.push({ monthKey: mk, totals: totals, isEstimated: false });
     }
     return months;
+  }
+
+  // Seasonally-adjusted estimate of an in-progress month's likely
+  // final total, for *display only* — never fed into the trend engine.
+  // Instead of assuming volume lands uniformly across the month (which
+  // the diagnostic showed is wrong — the first 2 days of a month
+  // average ~4% of the month's BQL, not 2/31=6.5%), it learns the
+  // typical day-D fraction from the same day-of-month in prior months.
+  function estimateSeasonalPace(rows, year, month, day, field, lookbackMonths) {
+    var mk = monthKey(year, month);
+    var fractions = [];
+    for (var i = 1; i <= lookbackMonths; i++) {
+      var pm = parseMonthKey(addMonths(mk, -i));
+      var dim = daysInMonth(pm.year, pm.month);
+      var d = Math.min(day, dim);
+      var full = pick(sumMonth(rows, pm.year, pm.month, null), field);
+      var partial = pick(sumMonth(rows, pm.year, pm.month, d), field);
+      if (full > 0) fractions.push(partial / full);
+    }
+    var avgFrac = fractions.length ? avg(fractions) : (day / daysInMonth(year, month));
+    var actualSoFar = pick(sumMonth(rows, year, month, day), field);
+    var projected = avgFrac > 0 ? actualSoFar / avgFrac : actualSoFar;
+    return { projected: projected, actualSoFar: actualSoFar, avgFraction: avgFrac, sampleMonths: fractions.length };
   }
 
   var CHAIN = ['BQL', 'r1', 'MS', 'r2', 'MD', 'r3', 'Order', 'r4', 'HOTO'];
@@ -255,19 +293,20 @@
   // "base" funnel object ready to feed into resolveFunnel(), plus the
   // raw series (for charting / transparency) and which months were
   // campaign-tagged.
-  function projectFunnelForRows(rows, planningMonth, settings, asOf, orderHotoOverrideRate) {
+  function projectFunnelForRows(rows, settings, asOf, orderHotoOverrideRate) {
     var n = settings.trailingMonths;
-    var months = buildTrailingSeries(rows, planningMonth, n, asOf);
-    var bqlSeries = [], r1Series = [], r2Series = [], r3Series = [], r4Series = [];
+    var months = buildTrailingSeries(rows, asOf, n);
+    var bqlSeries = [], msSeries = [], mdSeries = [], ordSeries = [], hotoSeries = [];
+    var r1Series = [], r2Series = [], r3Series = [], r4Series = [];
     var monthMeta = [];
     months.forEach(function (m) {
-      var t = m.figure.totals;
+      var t = m.totals;
       var bql = pick(t, settings.bqlField);
       var ms = pick(t, settings.msField);
       var md = pick(t, settings.mdField);
       var ord = pick(t, 'Order');
       var hoto = pick(t, 'HOTO');
-      bqlSeries.push(bql);
+      bqlSeries.push(bql); msSeries.push(ms); mdSeries.push(md); ordSeries.push(ord); hotoSeries.push(hoto);
       r1Series.push(safeRate(ms, bql));
       r2Series.push(safeRate(md, ms));
       r3Series.push(safeRate(ord, md));
@@ -275,7 +314,7 @@
       monthMeta.push({
         monthKey: m.monthKey,
         isCampaign: settings.campaignMonths.indexOf(m.monthKey) !== -1,
-        isEstimated: m.figure.isEstimated,
+        isEstimated: false,
         bql: bql
       });
     });
@@ -296,21 +335,35 @@
     base.Order = base.MD * base.r3;
     base.HOTO = base.Order * base.r4;
 
+    // In-progress month, shown separately — never blended into base.
+    var referenceMonth = getReferenceMonth(asOf);
+    var inProgress = null;
+    var isCurrentMonthComplete = (asOf.day >= daysInMonth(asOf.year, asOf.month));
+    if (!isCurrentMonthComplete) {
+      var curFields = { bql: settings.bqlField, ms: settings.msField, md: settings.mdField, ord: 'Order', hoto: 'HOTO' };
+      var pace = {};
+      Object.keys(curFields).forEach(function (k) {
+        pace[k] = estimateSeasonalPace(rows, asOf.year, asOf.month, asOf.day, curFields[k], Math.min(6, n * 2));
+      });
+      inProgress = { monthKey: monthKey(asOf.year, asOf.month), pace: pace, daysElapsed: asOf.day, daysInMonth: daysInMonth(asOf.year, asOf.month) };
+    }
+
     return {
       base: base,
       trendR4: trendR4,
-      series: { bql: bqlSeries, r1: r1Series, r2: r2Series, r3: r3Series, r4: r4Series },
-      months: monthMeta
+      referenceMonth: referenceMonth,
+      series: { bql: bqlSeries, ms: msSeries, md: mdSeries, order: ordSeries, hoto: hotoSeries, r1: r1Series, r2: r2Series, r3: r3Series, r4: r4Series },
+      months: monthMeta,
+      inProgress: inProgress
     };
   }
 
-  // Per-city / per-sub-channel share of BQL, trailing-n average, normalized.
-  function computeShares(rows, keys, keyField, planningMonth, n, asOf, bqlField) {
+  function computeShares(rows, keys, keyField, n, asOf, bqlField) {
     var seriesByKey = {};
     keys.forEach(function (k) {
       var subset = rows.filter(function (r) { return (keyField === 'city' ? normalizeCity(r.city) : r.sub_channel) === k; });
-      var months = buildTrailingSeries(subset, planningMonth, n, asOf);
-      seriesByKey[k] = months.map(function (m) { return pick(m.figure.totals, bqlField); });
+      var months = buildTrailingSeries(subset, asOf, n);
+      seriesByKey[k] = months.map(function (m) { return pick(m.totals, bqlField); });
     });
     return trailingShares(seriesByKey);
   }
@@ -356,6 +409,8 @@
     sumMonth: sumMonth,
     pick: pick,
     getMonthFigure: getMonthFigure,
+    getReferenceMonth: getReferenceMonth,
+    estimateSeasonalPace: estimateSeasonalPace,
     avg: avg,
     projectVolume: projectVolume,
     projectRate: projectRate,

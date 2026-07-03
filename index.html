@@ -67,6 +67,7 @@
       <label>&nbsp;</label>
       <div class="row">
         <button class="btn" id="export-json">Export JSON</button>
+        <button class="btn" id="export-excel">Export Excel</button>
         <button class="btn primary" id="save-version">Save version</button>
       </div>
     </div>
@@ -77,6 +78,7 @@
     <button data-tab="cities">Cities</button>
     <button data-tab="subchannels">Sub-Channels</button>
     <button data-tab="cross">City × Sub-Channel</button>
+    <button data-tab="historical">Historical</button>
     <button data-tab="initiatives">Initiatives</button>
     <button data-tab="settings">Settings</button>
   </div>
@@ -86,8 +88,9 @@
     <div class="legend"><span class="swatch"></span> amber = manually overwritten (click any number to edit, clear the box + Enter to revert)</div>
     <div class="card-grid" id="summary-cards"></div>
     <div class="rate-grid" id="summary-rates"></div>
-    <p style="font-size:12.5px;color:var(--text-soft);margin:0 0 8px;">Trailing months feeding this projection:</p>
+    <p style="font-size:12.5px;color:var(--text-soft);margin:0 0 8px;">Trailing complete months feeding this projection:</p>
     <div class="month-strip" id="month-strip"></div>
+    <div class="settings-block" id="current-pace" style="display:none;max-width:none;margin-top:16px;"></div>
   </div>
 
   <!-- CITIES -->
@@ -130,6 +133,26 @@
       <table>
         <thead id="cross-thead"></thead>
         <tbody id="cross-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- HISTORICAL -->
+  <div class="tab-panel" id="tab-historical">
+    <p style="font-size:12.5px;color:var(--text-soft);">Raw monthly actuals behind the trend calculation above — use this to sanity-check any number before trusting the projection. Only complete months are shown; the in-progress month is intentionally excluded here too (see the pace estimate on the Summary tab for that).</p>
+    <div class="controls" style="margin-bottom:12px;">
+      <div class="control-group">
+        <label>View by</label>
+        <div class="segmented" id="hist-mode">
+          <button data-val="city" class="active">City</button>
+          <button data-val="subchannel">Sub-channel</button>
+        </div>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead id="hist-thead"></thead>
+        <tbody id="hist-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -215,6 +238,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="core.js"></script>
 <script src="app.js"></script>
 <script>

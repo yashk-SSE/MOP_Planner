@@ -100,53 +100,53 @@
   function computeAll() {
     var universe = getUniverseRows();
     var s = state.settings;
-    var pm = state.planningMonth, asOf = state.asOf;
+    var asOf = state.asOf;
 
-    var panProj = MOPCore.projectFunnelForRows(universe, pm, s, asOf);
+    var panProj = MOPCore.projectFunnelForRows(universe, s, asOf);
     var panBase = MOPCore.applyInitiativesToBase(panProj.base, initiativesFor('all'));
     var panResolved = MOPCore.resolveFunnel(panBase, state.overrides.panIndia);
 
-    var cityShares = MOPCore.computeShares(universe, CITY_NAMES, 'city', pm, s.trailingMonths, asOf, s.bqlField);
-    var subShares = MOPCore.computeShares(universe, MOPCore.SUB_CHANNELS, 'subChannel', pm, s.trailingMonths, asOf, s.bqlField);
+    var cityShares = MOPCore.computeShares(universe, CITY_NAMES, 'city', s.trailingMonths, asOf, s.bqlField);
+    var subShares = MOPCore.computeShares(universe, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField);
 
     var cities = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
-      var proj = MOPCore.projectFunnelForRows(cityRows, pm, s, asOf, panResolved.state.r4);
+      var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, panResolved.state.r4);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('city', city));
       var shareBQL = panResolved.state.BQL * (cityShares[city] || 0);
       var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
       var resolved = MOPCore.resolveFunnel(withShare, state.overrides.city[city] || {});
-      cities[city] = { base: base, ownTrendBQL: proj.base.BQL, share: cityShares[city] || 0, resolved: resolved };
+      cities[city] = { base: base, ownTrendBQL: proj.base.BQL, share: cityShares[city] || 0, resolved: resolved, proj: proj };
     });
 
     var subChannels = {};
     MOPCore.SUB_CHANNELS.forEach(function (sc) {
       var scRows = MOPCore.filterRows(universe, { subChannels: [sc] });
-      var proj = MOPCore.projectFunnelForRows(scRows, pm, s, asOf, panResolved.state.r4);
+      var proj = MOPCore.projectFunnelForRows(scRows, s, asOf, panResolved.state.r4);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('subChannel', null, sc));
       var shareBQL = panResolved.state.BQL * (subShares[sc] || 0);
       var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
       var resolved = MOPCore.resolveFunnel(withShare, state.overrides.subChannel[sc] || {});
-      subChannels[sc] = { base: base, share: subShares[sc] || 0, resolved: resolved };
+      subChannels[sc] = { base: base, share: subShares[sc] || 0, resolved: resolved, proj: proj };
     });
 
     var btlRows = MOPCore.filterRows(state.rows, { cities: CITY_NAMES, subChannels: [MOPCore.BTL_CHANNEL] });
-    var lastFullMonth = MOPCore.addMonths(pm, -1);
-    var lp = MOPCore.parseMonthKey(lastFullMonth);
-    var btlFig = MOPCore.getMonthFigure(btlRows, lp.year, lp.month, asOf);
+    var referenceMonth = MOPCore.getReferenceMonth(asOf);
+    var lp = MOPCore.parseMonthKey(referenceMonth);
+    var btlFig = { totals: MOPCore.sumMonth(btlRows, lp.year, lp.month, null) };
 
     var cross = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
-      var withinShares = MOPCore.computeShares(cityRows, MOPCore.SUB_CHANNELS, 'subChannel', pm, s.trailingMonths, asOf, s.bqlField);
+      var withinShares = MOPCore.computeShares(cityRows, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField);
       var cityFinal = cities[city].resolved.state;
       var weights = {}, weightSum = 0;
       MOPCore.SUB_CHANNELS.forEach(function (sc) {
         var cellRows = MOPCore.filterRows(universe, { cities: [city], subChannels: [sc] });
-        var months = MOPCore.buildTrailingSeries(cellRows, pm, s.trailingMonths, asOf);
+        var months = MOPCore.buildTrailingSeries(cellRows, asOf, s.trailingMonths);
         var ratios = months.map(function (mo) {
-          var t = mo.figure.totals;
+          var t = mo.totals;
           return MOPCore.safeRate(MOPCore.pick(t, 'Order'), MOPCore.pick(t, s.bqlField));
         });
         var avgRatio = MOPCore.avg(ratios) || 0;
@@ -182,6 +182,7 @@
     renderCities();
     renderSubChannels();
     renderCross();
+    renderHistorical();
     renderInitiatives();
   }
 
@@ -266,10 +267,25 @@
       chip.className = 'month-chip';
       chip.innerHTML = '<span>' + m.monthKey + '</span>' +
         (m.isCampaign ? '<span class="tag">campaign</span>' : '') +
-        (m.isEstimated ? '<span class="tag est">run-rate est.</span>' : '') +
         '<span>BQL ' + fmt0(m.bql) + '</span>';
       strip.appendChild(chip);
     });
+
+    var paceWrap = document.getElementById('current-pace');
+    var ip = last.panProj.inProgress;
+    if (ip) {
+      paceWrap.style.display = 'block';
+      paceWrap.innerHTML = '<p class="hint" style="margin:0 0 8px;"><strong>' + ip.monthKey + '</strong> is still in progress (' + ip.daysElapsed + ' of ' + ip.daysInMonth + ' days elapsed) \u2014 shown here for context only, ' +
+        'it does <u>not</u> feed the projection above. Estimated using the typical share of month volume seen by day ' + ip.daysElapsed + ' in prior months, not a straight-line day-count (which understates early-month volume).</p>' +
+        '<div class="month-strip">' +
+        ['bql', 'ms', 'md', 'ord', 'hoto'].map(function (k) {
+          var label = { bql: 'BQL', ms: 'MS', md: 'MD', ord: 'Order', hoto: 'HOTO' }[k];
+          var p = ip.pace[k];
+          return '<div class="month-chip"><span>' + label + '</span><span>' + fmt0(p.actualSoFar) + ' so far \u2192 est. ' + fmt0(p.projected) + '</span></div>';
+        }).join('') + '</div>';
+    } else {
+      paceWrap.style.display = 'none';
+    }
   }
 
   // ---------------- Rendering: Cities ----------------
@@ -426,6 +442,48 @@
     });
   }
 
+  // ---------------- Rendering: Historical (verification) ----------------
+  var histMode = 'city';
+  function renderHistorical() {
+    var thead = document.getElementById('hist-thead');
+    var tbody = document.getElementById('hist-tbody');
+    var source = histMode === 'city' ? last.cities : last.subChannels;
+    var keys = histMode === 'city' ? CITY_NAMES : MOPCore.SUB_CHANNELS;
+    var anyKey = keys[0];
+    var months = source[anyKey].proj.months.map(function (m) { return m.monthKey; });
+
+    var metricCols = [
+      { k: 'bql', label: 'BQL', pct: false }, { k: 'r1', label: 'BQL\u2192MS%', pct: true },
+      { k: 'ms', label: 'MS', pct: false }, { k: 'r2', label: 'MS\u2192MD%', pct: true },
+      { k: 'md', label: 'MD', pct: false }, { k: 'r3', label: 'MD\u2192Order%', pct: true },
+      { k: 'order', label: 'Order', pct: false }, { k: 'r4', label: 'Order\u2192HOTO%', pct: true },
+      { k: 'hoto', label: 'HOTO', pct: false }
+    ];
+
+    thead.innerHTML = '<tr><th></th>' + months.map(function (m) {
+      var isCampaign = state.settings.campaignMonths.indexOf(m) !== -1;
+      return '<th colspan="' + metricCols.length + '">' + m + (isCampaign ? ' \ud83d\udd36campaign' : '') + '</th>';
+    }).join('') + '</tr>' +
+      '<tr><th>' + (histMode === 'city' ? 'City' : 'Sub-channel') + '</th>' +
+      months.map(function () { return metricCols.map(function (c) { return '<th>' + c.label + '</th>'; }).join(''); }).join('') +
+      '</tr>';
+
+    tbody.innerHTML = '';
+    keys.forEach(function (key) {
+      var series = source[key].proj.series;
+      var tr = document.createElement('tr');
+      var html = '<td>' + key + '</td>';
+      months.forEach(function (m, idx) {
+        metricCols.forEach(function (c) {
+          var v = series[c.k][idx];
+          html += '<td>' + (c.pct ? fmtPct(v) : fmt0(v)) + '</td>';
+        });
+      });
+      tr.innerHTML = html;
+      tbody.appendChild(tr);
+    });
+  }
+
   // ---------------- Controls wiring ----------------
   function initControlsFromState() {
     document.getElementById('planning-month').value = state.planningMonth;
@@ -501,6 +559,13 @@
     wireSegmented('ms-field', 'msField');
     wireSegmented('md-field', 'mdField');
     wireSegmented('hoto-mode', 'orderHotoMode');
+    document.querySelectorAll('#hist-mode button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        histMode = b.dataset.val;
+        setSegmented('hist-mode', histMode);
+        renderHistorical();
+      });
+    });
 
     document.querySelectorAll('.tabs button').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -535,6 +600,7 @@
     });
 
     document.getElementById('export-json').addEventListener('click', exportSnapshot);
+    document.getElementById('export-excel').addEventListener('click', exportExcelFile);
     document.getElementById('save-version').addEventListener('click', saveVersionToGitHub);
     document.getElementById('gh-save-settings').addEventListener('click', function () {
       state.gitHubToken = document.getElementById('gh-token').value.trim();
@@ -546,6 +612,122 @@
       toast('Saved to this browser.');
     });
   }
+
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function monthKeyLabel(mk) {
+    var p = MOPCore.parseMonthKey(mk);
+    return MONTH_NAMES[p.month - 1] + " '" + String(p.year).slice(2);
+  }
+
+  function exportExcelFile() {
+    if (!last || typeof XLSX === 'undefined') { toast('Excel library not loaded yet, try again in a moment.', true); return; }
+    var s = state.settings;
+    var pm = state.planningMonth;
+    var pmp = MOPCore.parseMonthKey(pm);
+    var monthName = MONTH_NAMES[pmp.month - 1];
+    var pan = last.panIndia.state;
+
+    var wb = XLSX.utils.book_new();
+
+    // ---- Summary ----
+    var trailingLabels = last.panProj.months.map(function (m) { return monthKeyLabel(m.monthKey); });
+    var summaryRows = [
+      ['SolarSquare Energy \u2013 ' + monthName + ' ' + pmp.year + ' MOP Summary'],
+      ['Projection basis: trailing ' + s.trailingMonths + ' complete months (' + trailingLabels.join(', ') + ') \u00b7 fields: BQL=' + s.bqlField + ', MS=' + s.msField + ', MD=' + s.mdField + ' \u00b7 Order\u2192HOTO: ' + (s.orderHotoMode === 'policy' ? 'policy ' + (s.orderHotoPolicyRate * 100).toFixed(1) + '%' : 'trend') + ' \u00b7 data as of ' + asOfToMonthInput(state.asOf)],
+      [],
+      ['Sub-Channel Summary (excl. BTL)'],
+      ['Sub-Channel', 'BQL', 'MS', 'MD', 'Order', 'HOTO']
+    ];
+    MOPCore.SUB_CHANNELS.forEach(function (sc) {
+      var st = last.subChannels[sc].resolved.state;
+      summaryRows.push([sc, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO)]);
+    });
+    summaryRows.push(['GRAND TOTAL', round1(pan.BQL), round1(pan.MS), round1(pan.MD), round1(pan.Order), round1(pan.HOTO)]);
+    summaryRows.push([]);
+    summaryRows.push(['Overall Conversion Rates (Pan India excl. BTL)']);
+    summaryRows.push(['Metric', monthName + " '" + String(pmp.year).slice(2) + ' Proj'].concat(trailingLabels.slice().reverse().map(function (l) { return l + ' Actual'; })));
+    ['r1', 'r2', 'r3', 'r4'].forEach(function (rk, idx) {
+      var label = { r1: 'BQL\u2192MS %', r2: 'MS\u2192MD %', r3: 'MD\u2192Order %', r4: 'Order\u2192HOTO %' }[rk];
+      var row = [label, round4(pan[rk])];
+      var series = last.panProj.series[rk].slice().reverse();
+      series.forEach(function (v) { row.push(round4(v)); });
+      summaryRows.push(row);
+    });
+    summaryRows.push([]);
+    summaryRows.push(['Initiatives applied this month']);
+    if (state.initiatives.length === 0) { summaryRows.push(['(none)']); }
+    state.initiatives.forEach(function (it) {
+      var scopeLabel = it.scope === 'all' ? 'All' : it.scope === 'city' ? ('City: ' + it.scopeCity) : ('Sub-channel: ' + it.scopeSubChannel);
+      summaryRows.push([it.name, scopeLabel, METRIC_LABELS[it.metric], it.impactType, it.impactValue, it.description || '']);
+    });
+    var wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    // ---- Sub-Channel Funnel ----
+    var scRows = [
+      [monthName + ' ' + pmp.year + ' MOP  |  Sub-Channel Funnel (excl. BTL)'],
+      ['Sub-Channel', 'BQL', 'MS', 'MD', 'Order', 'HOTO', 'BQL\u2192MS %', 'MS\u2192MD %', 'MD\u2192Ord %', 'Ord\u2192HOTO %', 'Overall BQL\u2192HOTO %']
+    ];
+    MOPCore.SUB_CHANNELS.forEach(function (sc) {
+      var st = last.subChannels[sc].resolved.state;
+      scRows.push([sc, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO), round4(st.r1), round4(st.r2), round4(st.r3), round4(st.r4), round4(MOPCore.safeRate(st.HOTO, st.BQL))]);
+    });
+    scRows.push(['TOTAL (excl. BTL)', round1(pan.BQL), round1(pan.MS), round1(pan.MD), round1(pan.Order), round1(pan.HOTO), round4(pan.r1), round4(pan.r2), round4(pan.r3), round4(pan.r4), round4(MOPCore.safeRate(pan.HOTO, pan.BQL))]);
+    var b = last.btl.totals;
+    scRows.push(['BTL (excluded from projection, reference only)', round1(MOPCore.pick(b, s.bqlField)), round1(MOPCore.pick(b, s.msField)), round1(MOPCore.pick(b, s.mdField)), round1(b.Order), round1(b.HOTO), '', '', '', '', '']);
+    var wsSc = XLSX.utils.aoa_to_sheet(scRows);
+    XLSX.utils.book_append_sheet(wb, wsSc, 'Sub-Channel Funnel');
+
+    // ---- City Funnel ----
+    var cityRows = [
+      [monthName + ' ' + pmp.year + ' MOP  |  City-Level Funnel (excl. BTL)'],
+      ['Cluster', 'City', 'BQL', 'MS', 'MD', 'Order', 'HOTO', 'BQL\u2192MS %', 'MS\u2192MD %', 'MD\u2192Ord %', 'Ord\u2192HOTO %', 'BQL\u2192HOTO %']
+    ];
+    var cityTotals = { BQL: 0, MS: 0, MD: 0, Order: 0, HOTO: 0 };
+    MOPCore.CITIES.forEach(function (c) {
+      var st = last.cities[c.name].resolved.state;
+      ['BQL', 'MS', 'MD', 'Order', 'HOTO'].forEach(function (k) { cityTotals[k] += st[k]; });
+      cityRows.push([c.cluster, c.name, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO), round4(st.r1), round4(st.r2), round4(st.r3), round4(st.r4), round4(MOPCore.safeRate(st.HOTO, st.BQL))]);
+    });
+    cityRows.push(['', 'PAN INDIA TOTAL', round1(cityTotals.BQL), round1(cityTotals.MS), round1(cityTotals.MD), round1(cityTotals.Order), round1(cityTotals.HOTO),
+      round4(MOPCore.safeRate(cityTotals.MS, cityTotals.BQL)), round4(MOPCore.safeRate(cityTotals.MD, cityTotals.MS)), round4(MOPCore.safeRate(cityTotals.Order, cityTotals.MD)), round4(MOPCore.safeRate(cityTotals.HOTO, cityTotals.Order)), round4(MOPCore.safeRate(cityTotals.HOTO, cityTotals.BQL))]);
+    var wsCity = XLSX.utils.aoa_to_sheet(cityRows);
+    XLSX.utils.book_append_sheet(wb, wsCity, 'City Funnel');
+
+    // ---- City x Sub-Channel ----
+    var crossHeader1 = ['', ''];
+    var crossHeader2 = ['Cluster', 'City'];
+    MOPCore.SUB_CHANNELS.forEach(function (sc) { crossHeader1.push(sc, '', ''); crossHeader2.push('BQL', 'Order', 'HOTO'); });
+    crossHeader1.push('CITY TOTAL', '', '');
+    crossHeader2.push('BQL', 'Order', 'HOTO');
+    var crossRows = [
+      [monthName + ' ' + pmp.year + ' MOP | City \u00d7 Sub-Channel Targets (excl. BTL)'],
+      crossHeader1, crossHeader2
+    ];
+    var crossTotals = { BQL: 0, Order: 0, HOTO: 0 };
+    MOPCore.CITIES.forEach(function (c) {
+      var row = [c.cluster, c.name];
+      MOPCore.SUB_CHANNELS.forEach(function (sc) {
+        var cell = last.cross[c.name][sc];
+        row.push(round1(cell.BQL), round1(cell.Order), round1(cell.HOTO));
+      });
+      var cityTot = last.cities[c.name].resolved.state;
+      row.push(round1(cityTot.BQL), round1(cityTot.Order), round1(cityTot.HOTO));
+      crossTotals.BQL += cityTot.BQL; crossTotals.Order += cityTot.Order; crossTotals.HOTO += cityTot.HOTO;
+      crossRows.push(row);
+    });
+    var totalRow = ['', 'PAN INDIA TOTAL'];
+    MOPCore.SUB_CHANNELS.forEach(function () { totalRow.push('', '', ''); });
+    totalRow.push(round1(crossTotals.BQL), round1(crossTotals.Order), round1(crossTotals.HOTO));
+    crossRows.push(totalRow);
+    var wsCross = XLSX.utils.aoa_to_sheet(crossRows);
+    XLSX.utils.book_append_sheet(wb, wsCross, 'CityxSub Channel');
+
+    XLSX.writeFile(wb, monthName + '_MOP_Referral.xlsx');
+    toast('Downloaded ' + monthName + '_MOP_Referral.xlsx');
+  }
+  function round1(n) { return Math.round(n * 10) / 10; }
+  function round4(n) { return Math.round(n * 10000) / 10000; }
 
   // ---------------- Snapshot / GitHub save ----------------
   function buildSnapshot() {
