@@ -14,7 +14,6 @@ Uses the same blue theme as the dashboard: dark-blue title bars, blue column hea
 ## Percentages
 All rates display at 1 decimal place everywhere — dashboard cards, tables, edit boxes, and the Excel export.
 
-
 ## Files
 - `index.html` — page shell and layout
 - `styles.css` — light theme, rounded/modern styling built around the SolarSquare logo's blue
