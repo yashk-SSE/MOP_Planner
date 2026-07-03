@@ -4,17 +4,21 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>MOP Planner — SolarSquare Referral</title>
+<link rel="icon" type="image/png" href="logo.png" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <div class="app">
 
   <div class="app-header">
-    <h1>MOP Planner</h1>
-    <div class="sub">SolarSquare Energy — Referral channel · monthly operating plan</div>
-    <div id="data-status" class="data-status">Loading…</div>
-    <div id="upload-fallback" style="display:none;margin-top:8px;">
-      <input type="file" id="file-input" accept="application/json" />
+    <img src="logo.png" alt="SolarSquare" class="logo" />
+    <div>
+      <h1>SolarSquare MOP Planner | Referral</h1>
+      <div class="sub">Monthly operating plan dashboard</div>
+      <div id="data-status" class="data-status">Loading…</div>
+      <div id="upload-fallback" style="display:none;margin-top:8px;">
+        <input type="file" id="file-input" accept="application/json" />
+      </div>
     </div>
   </div>
 
@@ -30,6 +34,10 @@
     <div class="control-group">
       <label>Trailing months (n)</label>
       <input type="number" id="trailing-n" min="1" max="12" style="width:60px;" />
+    </div>
+    <div class="control-group">
+      <label>Min. days to trust current month</label>
+      <input type="number" id="min-days-current" min="1" max="28" style="width:60px;" />
     </div>
     <div class="control-group">
       <label>BQL field</label>
@@ -139,7 +147,7 @@
 
   <!-- HISTORICAL -->
   <div class="tab-panel" id="tab-historical">
-    <p style="font-size:12.5px;color:var(--text-soft);">Raw monthly actuals behind the trend calculation above — use this to sanity-check any number before trusting the projection. Only complete months are shown; the in-progress month is intentionally excluded here too (see the pace estimate on the Summary tab for that).</p>
+    <p style="font-size:12.5px;color:var(--text-soft);">Raw monthly actuals behind the trend calculation above — use this to sanity-check any number before trusting the projection. Only months actually used in the trend are shown (see the pace box on the Summary tab for a month still too early to include).</p>
     <div class="controls" style="margin-bottom:12px;">
       <div class="control-group">
         <label>View by</label>
@@ -149,10 +157,20 @@
         </div>
       </div>
     </div>
+
+    <p style="font-size:12.5px;color:var(--text-soft);font-weight:600;margin:0 0 8px;">Volume metrics</p>
     <div class="table-wrap">
       <table>
-        <thead id="hist-thead"></thead>
-        <tbody id="hist-tbody"></tbody>
+        <thead id="hist-vol-thead"></thead>
+        <tbody id="hist-vol-tbody"></tbody>
+      </table>
+    </div>
+
+    <p style="font-size:12.5px;color:var(--text-soft);font-weight:600;margin:0 0 8px;">Funnel rates</p>
+    <div class="table-wrap">
+      <table>
+        <thead id="hist-rate-thead"></thead>
+        <tbody id="hist-rate-tbody"></tbody>
       </table>
     </div>
   </div>

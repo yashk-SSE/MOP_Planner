@@ -61,6 +61,7 @@
     msField: 'First_MS',
     mdField: 'First_MD',
     trailingMonths: 3,
+    minDaysForCurrentMonth: 5, // below this, the in-progress month is too noisy to use at all (see diagnostic: day-2 estimates swung +/-22pp on one test month); at or above it, seasonally-adjusted estimates land within ~1-4pp of the eventual actual
     orderHotoMode: 'policy', // 'policy' | 'trend'
     orderHotoPolicyRate: 0.95,
     campaignMonths: ['2025-12', '2026-03', '2026-04', '2026-06']
@@ -182,28 +183,46 @@
 
   function safeRate(num, den) { return den > 0 ? num / den : 0; }
 
-  function getReferenceMonth(asOf) {
-    // The most recent month that is fully complete as of asOf.
+  function getReferenceMonth(asOf, minDays) {
+    // The most recent month usable for the trend: fully complete months
+    // always qualify; the in-progress month qualifies too once at least
+    // `minDays` have elapsed (diagnostic showed day-2 estimates are too
+    // noisy to trust, but day-5+ estimates land within ~1-4pp of the
+    // eventual true rate once seasonally adjusted).
     var lastDay = daysInMonth(asOf.year, asOf.month);
     if (asOf.day >= lastDay) return monthKey(asOf.year, asOf.month);
+    if (minDays != null && asOf.day >= minDays) return monthKey(asOf.year, asOf.month);
     return addMonths(monthKey(asOf.year, asOf.month), -1);
   }
 
-  // Always returns n *complete* months ending at the latest complete
-  // month as of asOf — independent of how far away the planning month
-  // is. A month still in progress is never included here: mixing a
-  // 1-2 day partial month into the same average as full months
-  // systematically understates rates (a lead created today hasn't had
-  // time to reach MS yet) and volumes (early-month days are rarely
-  // representative of the full month's pace).
-  function buildTrailingSeries(rows, asOf, n) {
-    var referenceMonth = getReferenceMonth(asOf);
+  // Totals for one month in the trailing series. Complete months use
+  // plain actuals. A qualifying in-progress month uses seasonally-
+  // adjusted estimates for EACH metric independently (not a shared
+  // day-count factor) — projecting BQL and MS separately and then
+  // taking their ratio cancels out most of the day-of-month bias,
+  // unlike using the raw same-day ratio directly.
+  function getMonthTotalsForTrend(rows, year, month, asOf, lookbackMonths) {
+    var lastDay = daysInMonth(year, month);
+    var isCurrentInProgress = (year === asOf.year && month === asOf.month && asOf.day < lastDay);
+    if (!isCurrentInProgress) {
+      return { totals: sumMonth(rows, year, month, null), isEstimated: false };
+    }
+    var fields = ['BQL_Old', 'BQL_New', 'First_MS', 'Total_MS', 'First_MD', 'Total_MD', 'Order', 'HOTO'];
+    var totals = {};
+    fields.forEach(function (f) {
+      totals[f] = estimateSeasonalPace(rows, year, month, asOf.day, f, lookbackMonths).projected;
+    });
+    return { totals: totals, isEstimated: true, daysElapsed: asOf.day, daysInMonth: lastDay };
+  }
+
+  function buildTrailingSeries(rows, asOf, n, minDaysForCurrentMonth) {
+    var referenceMonth = getReferenceMonth(asOf, minDaysForCurrentMonth);
     var months = [];
     for (var i = n - 1; i >= 0; i--) {
       var mk = addMonths(referenceMonth, -i);
       var p = parseMonthKey(mk);
-      var totals = sumMonth(rows, p.year, p.month, null);
-      months.push({ monthKey: mk, totals: totals, isEstimated: false });
+      var r = getMonthTotalsForTrend(rows, p.year, p.month, asOf, Math.min(6, n * 2));
+      months.push({ monthKey: mk, totals: r.totals, isEstimated: r.isEstimated });
     }
     return months;
   }
@@ -295,7 +314,7 @@
   // campaign-tagged.
   function projectFunnelForRows(rows, settings, asOf, orderHotoOverrideRate) {
     var n = settings.trailingMonths;
-    var months = buildTrailingSeries(rows, asOf, n);
+    var months = buildTrailingSeries(rows, asOf, n, settings.minDaysForCurrentMonth);
     var bqlSeries = [], msSeries = [], mdSeries = [], ordSeries = [], hotoSeries = [];
     var r1Series = [], r2Series = [], r3Series = [], r4Series = [];
     var monthMeta = [];
@@ -314,7 +333,7 @@
       monthMeta.push({
         monthKey: m.monthKey,
         isCampaign: settings.campaignMonths.indexOf(m.monthKey) !== -1,
-        isEstimated: false,
+        isEstimated: m.isEstimated,
         bql: bql
       });
     });
@@ -335,17 +354,21 @@
     base.Order = base.MD * base.r3;
     base.HOTO = base.Order * base.r4;
 
-    // In-progress month, shown separately — never blended into base.
-    var referenceMonth = getReferenceMonth(asOf);
+    // If the in-progress month hasn't hit the minimum-days threshold,
+    // it's excluded from the series above — show it separately instead,
+    // clearly marked as too early to trust in the main trend.
+    var referenceMonth = getReferenceMonth(asOf, settings.minDaysForCurrentMonth);
+    var lastDayOfCurrent = daysInMonth(asOf.year, asOf.month);
+    var currentIsInProgress = asOf.day < lastDayOfCurrent;
+    var currentIncludedInTrend = referenceMonth === monthKey(asOf.year, asOf.month);
     var inProgress = null;
-    var isCurrentMonthComplete = (asOf.day >= daysInMonth(asOf.year, asOf.month));
-    if (!isCurrentMonthComplete) {
+    if (currentIsInProgress && !currentIncludedInTrend) {
       var curFields = { bql: settings.bqlField, ms: settings.msField, md: settings.mdField, ord: 'Order', hoto: 'HOTO' };
       var pace = {};
       Object.keys(curFields).forEach(function (k) {
         pace[k] = estimateSeasonalPace(rows, asOf.year, asOf.month, asOf.day, curFields[k], Math.min(6, n * 2));
       });
-      inProgress = { monthKey: monthKey(asOf.year, asOf.month), pace: pace, daysElapsed: asOf.day, daysInMonth: daysInMonth(asOf.year, asOf.month) };
+      inProgress = { monthKey: monthKey(asOf.year, asOf.month), pace: pace, daysElapsed: asOf.day, daysInMonth: lastDayOfCurrent, tooEarly: true, threshold: settings.minDaysForCurrentMonth };
     }
 
     return {
@@ -358,11 +381,11 @@
     };
   }
 
-  function computeShares(rows, keys, keyField, n, asOf, bqlField) {
+  function computeShares(rows, keys, keyField, n, asOf, bqlField, minDaysForCurrentMonth) {
     var seriesByKey = {};
     keys.forEach(function (k) {
       var subset = rows.filter(function (r) { return (keyField === 'city' ? normalizeCity(r.city) : r.sub_channel) === k; });
-      var months = buildTrailingSeries(subset, asOf, n);
+      var months = buildTrailingSeries(subset, asOf, n, minDaysForCurrentMonth);
       seriesByKey[k] = months.map(function (m) { return pick(m.totals, bqlField); });
     });
     return trailingShares(seriesByKey);

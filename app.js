@@ -106,8 +106,8 @@
     var panBase = MOPCore.applyInitiativesToBase(panProj.base, initiativesFor('all'));
     var panResolved = MOPCore.resolveFunnel(panBase, state.overrides.panIndia);
 
-    var cityShares = MOPCore.computeShares(universe, CITY_NAMES, 'city', s.trailingMonths, asOf, s.bqlField);
-    var subShares = MOPCore.computeShares(universe, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField);
+    var cityShares = MOPCore.computeShares(universe, CITY_NAMES, 'city', s.trailingMonths, asOf, s.bqlField, s.minDaysForCurrentMonth);
+    var subShares = MOPCore.computeShares(universe, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField, s.minDaysForCurrentMonth);
 
     var cities = {};
     CITY_NAMES.forEach(function (city) {
@@ -139,12 +139,12 @@
     var cross = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
-      var withinShares = MOPCore.computeShares(cityRows, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField);
+      var withinShares = MOPCore.computeShares(cityRows, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField, s.minDaysForCurrentMonth);
       var cityFinal = cities[city].resolved.state;
       var weights = {}, weightSum = 0;
       MOPCore.SUB_CHANNELS.forEach(function (sc) {
         var cellRows = MOPCore.filterRows(universe, { cities: [city], subChannels: [sc] });
-        var months = MOPCore.buildTrailingSeries(cellRows, asOf, s.trailingMonths);
+        var months = MOPCore.buildTrailingSeries(cellRows, asOf, s.trailingMonths, s.minDaysForCurrentMonth);
         var ratios = months.map(function (mo) {
           var t = mo.totals;
           return MOPCore.safeRate(MOPCore.pick(t, 'Order'), MOPCore.pick(t, s.bqlField));
@@ -218,17 +218,22 @@
     });
   }
 
+  function lastVal(series) { return series[series.length - 1]; }
+
   // ---------------- Rendering: Summary ----------------
   function renderSummary() {
     var r = last.panIndia.state, flags = last.panIndia.flags;
+    var prevMonthKey = last.panProj.months[last.panProj.months.length - 1].monthKey;
     var cardGrid = document.getElementById('summary-cards');
     cardGrid.innerHTML = '';
+    var seriesKeyFor = { BQL: 'bql', MS: 'ms', MD: 'md', Order: 'order', HOTO: 'hoto' };
     VOL_KEYS.forEach(function (k) {
+      var prev = lastVal(last.panProj.series[seriesKeyFor[k]]);
       var card = document.createElement('div');
       card.className = 'metric-card';
       card.innerHTML = '<div class="label">' + METRIC_LABELS[k] + '</div>' +
-        '<div class="value ' + (flags[k] ? 'overridden' : '') + '">' + fmt0(r[k]) + '</div>' +
-        '<div class="delta">' + (flags[k] === 'derived' ? 'rate back-solved from override' : (flags[k] ? 'manually overwritten' : 'projected')) + '</div>';
+        '<div class="value ' + (flags[k] ? 'overridden' : '') + '">' + fmt0(r[k]) + '<span class="ref-prev">(' + fmt0(prev) + ')</span></div>' +
+        '<div class="delta">' + (flags[k] === 'derived' ? 'rate back-solved from override' : (flags[k] ? 'manually overwritten' : 'projected \u00b7 ' + prevMonthKey + ' in brackets')) + '</div>';
       var valEl = card.querySelector('.value');
       makeEditable(valEl, function () { return r[k]; }, false,
         function (v) { state.overrides.panIndia[k] = v; },
@@ -239,6 +244,7 @@
     var rateGrid = document.getElementById('summary-rates');
     rateGrid.innerHTML = '';
     RATE_KEYS.forEach(function (k) {
+      var prev = lastVal(last.panProj.series[k]);
       var card = document.createElement('div');
       card.className = 'rate-card';
       var refNote = '';
@@ -253,7 +259,7 @@
         '<div class="value ' + (flags[k] ? 'overridden' : '') + '"></div>' +
         '<div class="ref">' + refNote + '</div>';
       var valEl = card.querySelector('.value');
-      valEl.textContent = fmtPct(r[k]);
+      valEl.innerHTML = fmtPct(r[k]) + '<span class="ref-prev">(' + fmtPct(prev) + ')</span>';
       makeEditable(valEl, function () { return r[k]; }, true,
         function (v) { state.overrides.panIndia[k] = v; },
         function () { delete state.overrides.panIndia[k]; });
@@ -267,6 +273,7 @@
       chip.className = 'month-chip';
       chip.innerHTML = '<span>' + m.monthKey + '</span>' +
         (m.isCampaign ? '<span class="tag">campaign</span>' : '') +
+        (m.isEstimated ? '<span class="tag est">seasonally est.</span>' : '') +
         '<span>BQL ' + fmt0(m.bql) + '</span>';
       strip.appendChild(chip);
     });
@@ -275,8 +282,7 @@
     var ip = last.panProj.inProgress;
     if (ip) {
       paceWrap.style.display = 'block';
-      paceWrap.innerHTML = '<p class="hint" style="margin:0 0 8px;"><strong>' + ip.monthKey + '</strong> is still in progress (' + ip.daysElapsed + ' of ' + ip.daysInMonth + ' days elapsed) \u2014 shown here for context only, ' +
-        'it does <u>not</u> feed the projection above. Estimated using the typical share of month volume seen by day ' + ip.daysElapsed + ' in prior months, not a straight-line day-count (which understates early-month volume).</p>' +
+      paceWrap.innerHTML = '<p class="hint" style="margin:0 0 8px;"><strong>' + ip.monthKey + '</strong> has only ' + ip.daysElapsed + ' of ' + ip.daysInMonth + ' days of data \u2014 below the ' + ip.threshold + '-day minimum to trust even a seasonally-adjusted estimate, so it\u2019s excluded from the trend above (shown here for context only). Once it reaches day ' + ip.threshold + ', it will automatically join the trend as an estimated month.</p>' +
         '<div class="month-strip">' +
         ['bql', 'ms', 'md', 'ord', 'hoto'].map(function (k) {
           var label = { bql: 'BQL', ms: 'MS', md: 'MD', ord: 'Order', hoto: 'HOTO' }[k];
@@ -289,6 +295,8 @@
   }
 
   // ---------------- Rendering: Cities ----------------
+  var SERIES_KEY_FOR = { BQL: 'bql', MS: 'ms', MD: 'md', Order: 'order', HOTO: 'hoto' };
+
   function renderCities() {
     var tbody = document.getElementById('cities-tbody');
     tbody.innerHTML = '';
@@ -304,12 +312,12 @@
 
       byCluster[cluster].forEach(function (city) {
         var c = last.cities[city];
-        var st = c.resolved.state, fl = c.resolved.flags;
+        var st = c.resolved.state, fl = c.resolved.flags, sr = c.proj.series;
         VOL_KEYS.forEach(function (k) { totals[k] += st[k]; });
         var tr = document.createElement('tr');
         tr.innerHTML = '<td></td><td>' + city + '</td>' +
-          VOL_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmt0(st[k]) + '</td>'; }).join('') +
-          RATE_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmtPct(st[k]) + '</td>'; }).join('') +
+          VOL_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmt0(st[k]) + '<span class="ref-prev-cell">(' + fmt0(lastVal(sr[SERIES_KEY_FOR[k]])) + ')</span></td>'; }).join('') +
+          RATE_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmtPct(st[k]) + '<span class="ref-prev-cell">(' + fmtPct(lastVal(sr[k])) + ')</span></td>'; }).join('') +
           '<td>' + fmtPct(MOPCore.safeRate(st.HOTO, st.BQL)) + '</td>';
         VOL_KEYS.forEach(function (k) {
           var td = tr.querySelector('td[data-k="' + k + '"]');
@@ -342,7 +350,7 @@
     var panBQL = last.panIndia.state.BQL;
     document.getElementById('cities-reconcile').textContent =
       'Sum of 27 cities BQL: ' + fmt0(totals.BQL) + ' \u00b7 Pan-India projected BQL: ' + fmt0(panBQL) +
-      ' (should match \u2014 city BQL is share-derived from this same pan-India number, not independently trended)';
+      ' (should match \u2014 city BQL is share-derived from this same pan-India number, not independently trended). Bracketed numbers are last month\u2019s figure for reference.';
   }
 
   // ---------------- Rendering: Sub-channels ----------------
@@ -351,11 +359,11 @@
     tbody.innerHTML = '';
     MOPCore.SUB_CHANNELS.forEach(function (sc) {
       var c = last.subChannels[sc];
-      var st = c.resolved.state, fl = c.resolved.flags;
+      var st = c.resolved.state, fl = c.resolved.flags, sr = c.proj.series;
       var tr = document.createElement('tr');
       tr.innerHTML = '<td>' + sc + '</td>' +
-        VOL_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmt0(st[k]) + '</td>'; }).join('') +
-        RATE_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmtPct(st[k]) + '</td>'; }).join('') +
+        VOL_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmt0(st[k]) + '<span class="ref-prev-cell">(' + fmt0(lastVal(sr[SERIES_KEY_FOR[k]])) + ')</span></td>'; }).join('') +
+        RATE_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmtPct(st[k]) + '<span class="ref-prev-cell">(' + fmtPct(lastVal(sr[k])) + ')</span></td>'; }).join('') +
         '<td>' + fmtPct(MOPCore.safeRate(st.HOTO, st.BQL)) + '</td>';
       VOL_KEYS.forEach(function (k) {
         var td = tr.querySelector('td[data-k="' + k + '"]');
@@ -445,27 +453,31 @@
   // ---------------- Rendering: Historical (verification) ----------------
   var histMode = 'city';
   function renderHistorical() {
-    var thead = document.getElementById('hist-thead');
-    var tbody = document.getElementById('hist-tbody');
     var source = histMode === 'city' ? last.cities : last.subChannels;
     var keys = histMode === 'city' ? CITY_NAMES : MOPCore.SUB_CHANNELS;
     var anyKey = keys[0];
     var months = source[anyKey].proj.months.map(function (m) { return m.monthKey; });
+    var label = histMode === 'city' ? 'City' : 'Sub-channel';
 
-    var metricCols = [
-      { k: 'bql', label: 'BQL', pct: false }, { k: 'r1', label: 'BQL\u2192MS%', pct: true },
-      { k: 'ms', label: 'MS', pct: false }, { k: 'r2', label: 'MS\u2192MD%', pct: true },
-      { k: 'md', label: 'MD', pct: false }, { k: 'r3', label: 'MD\u2192Order%', pct: true },
-      { k: 'order', label: 'Order', pct: false }, { k: 'r4', label: 'Order\u2192HOTO%', pct: true },
-      { k: 'hoto', label: 'HOTO', pct: false }
-    ];
+    renderHistoricalTable('hist-vol-thead', 'hist-vol-tbody', months, label, keys, source,
+      [{ k: 'bql', label: 'BQL', pct: false }, { k: 'ms', label: 'MS', pct: false }, { k: 'md', label: 'MD', pct: false }, { k: 'order', label: 'Order', pct: false }, { k: 'hoto', label: 'HOTO', pct: false }]);
+
+    renderHistoricalTable('hist-rate-thead', 'hist-rate-tbody', months, label, keys, source,
+      [{ k: 'r1', label: 'BQL\u2192MS%', pct: true }, { k: 'r2', label: 'MS\u2192MD%', pct: true }, { k: 'r3', label: 'MD\u2192Ord%', pct: true }, { k: 'r4', label: 'Ord\u2192HOTO%', pct: true }]);
+  }
+
+  function renderHistoricalTable(theadId, tbodyId, months, label, keys, source, metricCols) {
+    var thead = document.getElementById(theadId);
+    var tbody = document.getElementById(tbodyId);
 
     thead.innerHTML = '<tr><th></th>' + months.map(function (m) {
       var isCampaign = state.settings.campaignMonths.indexOf(m) !== -1;
-      return '<th colspan="' + metricCols.length + '">' + m + (isCampaign ? ' \ud83d\udd36campaign' : '') + '</th>';
+      return '<th class="month-sep" colspan="' + metricCols.length + '">' + m + (isCampaign ? ' (campaign)' : '') + '</th>';
     }).join('') + '</tr>' +
-      '<tr><th>' + (histMode === 'city' ? 'City' : 'Sub-channel') + '</th>' +
-      months.map(function () { return metricCols.map(function (c) { return '<th>' + c.label + '</th>'; }).join(''); }).join('') +
+      '<tr><th>' + label + '</th>' +
+      months.map(function () {
+        return metricCols.map(function (c, idx) { return '<th' + (idx === 0 ? ' class="month-sep"' : '') + '>' + c.label + '</th>'; }).join('');
+      }).join('') +
       '</tr>';
 
     tbody.innerHTML = '';
@@ -474,9 +486,9 @@
       var tr = document.createElement('tr');
       var html = '<td>' + key + '</td>';
       months.forEach(function (m, idx) {
-        metricCols.forEach(function (c) {
+        metricCols.forEach(function (c, ci) {
           var v = series[c.k][idx];
-          html += '<td>' + (c.pct ? fmtPct(v) : fmt0(v)) + '</td>';
+          html += '<td' + (ci === 0 ? ' class="month-sep"' : '') + '>' + (c.pct ? fmtPct(v) : fmt0(v)) + '</td>';
         });
       });
       tr.innerHTML = html;
@@ -489,6 +501,7 @@
     document.getElementById('planning-month').value = state.planningMonth;
     document.getElementById('asof-date').value = asOfToMonthInput(state.asOf);
     document.getElementById('trailing-n').value = state.settings.trailingMonths;
+    document.getElementById('min-days-current').value = state.settings.minDaysForCurrentMonth;
     document.getElementById('hoto-policy-rate').value = (state.settings.orderHotoPolicyRate * 100).toFixed(1);
     setSegmented('bql-field', state.settings.bqlField);
     setSegmented('ms-field', state.settings.msField);
@@ -549,6 +562,10 @@
     });
     document.getElementById('trailing-n').addEventListener('change', function (e) {
       state.settings.trailingMonths = Math.max(1, Math.min(12, parseInt(e.target.value, 10) || 3));
+      computeAndRender();
+    });
+    document.getElementById('min-days-current').addEventListener('change', function (e) {
+      state.settings.minDaysForCurrentMonth = Math.max(1, Math.min(28, parseInt(e.target.value, 10) || 5));
       computeAndRender();
     });
     document.getElementById('hoto-policy-rate').addEventListener('change', function (e) {
