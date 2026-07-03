@@ -89,6 +89,11 @@
     return monthKey(y, m);
   }
 
+  function monthsBetween(fromKey, toKey) {
+    var f = parseMonthKey(fromKey), t = parseMonthKey(toKey);
+    return (t.year * 12 + t.month) - (f.year * 12 + f.month);
+  }
+
   function parseActionDate(str) {
     var parts = str.split('/');
     return { day: parseInt(parts[0], 10), month: parseInt(parts[1], 10), year: parseInt(parts[2], 10) };
@@ -159,7 +164,8 @@
 
   function avg(arr) { return arr.reduce(function (a, b) { return a + b; }, 0) / arr.length; }
 
-  function projectVolume(series) {
+  function projectVolume(series, steps) {
+    steps = steps || 1;
     if (series.length === 0) return 0;
     if (series.length === 1) return series[0];
     var level = avg(series);
@@ -168,17 +174,18 @@
       if (series[i - 1] > 0) deltas.push((series[i] - series[i - 1]) / series[i - 1]);
     }
     var momentum = deltas.length ? avg(deltas) : 0;
-    return level * (1 + momentum);
+    return level * Math.pow(1 + momentum, steps);
   }
 
-  function projectRate(series) {
+  function projectRate(series, steps) {
+    steps = steps || 1;
     if (series.length === 0) return 0;
     if (series.length === 1) return Math.max(0, series[0]);
     var level = avg(series);
     var deltas = [];
     for (var i = 1; i < series.length; i++) deltas.push(series[i] - series[i - 1]);
     var momentum = deltas.length ? avg(deltas) : 0;
-    return Math.max(0, level + momentum);
+    return Math.max(0, level + momentum * steps);
   }
 
   function safeRate(num, den) { return den > 0 ? num / den : 0; }
@@ -312,9 +319,11 @@
   // "base" funnel object ready to feed into resolveFunnel(), plus the
   // raw series (for charting / transparency) and which months were
   // campaign-tagged.
-  function projectFunnelForRows(rows, settings, asOf, orderHotoOverrideRate) {
+  function projectFunnelForRows(rows, settings, asOf, planningMonth, orderHotoOverrideRate) {
     var n = settings.trailingMonths;
     var months = buildTrailingSeries(rows, asOf, n, settings.minDaysForCurrentMonth);
+    var referenceMonth = getReferenceMonth(asOf, settings.minDaysForCurrentMonth);
+    var steps = Math.max(1, monthsBetween(referenceMonth, planningMonth));
     var bqlSeries = [], msSeries = [], mdSeries = [], ordSeries = [], hotoSeries = [];
     var r1Series = [], r2Series = [], r3Series = [], r4Series = [];
     var monthMeta = [];
@@ -339,12 +348,12 @@
     });
 
     var base = {
-      BQL: projectVolume(bqlSeries),
-      r1: projectRate(r1Series),
-      r2: projectRate(r2Series),
-      r3: projectRate(r3Series)
+      BQL: projectVolume(bqlSeries, steps),
+      r1: projectRate(r1Series, steps),
+      r2: projectRate(r2Series, steps),
+      r3: projectRate(r3Series, steps)
     };
-    var trendR4 = projectRate(r4Series);
+    var trendR4 = projectRate(r4Series, steps);
     base.r4 = (settings.orderHotoMode === 'policy')
       ? (orderHotoOverrideRate != null ? orderHotoOverrideRate : settings.orderHotoPolicyRate)
       : trendR4;
@@ -357,7 +366,6 @@
     // If the in-progress month hasn't hit the minimum-days threshold,
     // it's excluded from the series above — show it separately instead,
     // clearly marked as too early to trust in the main trend.
-    var referenceMonth = getReferenceMonth(asOf, settings.minDaysForCurrentMonth);
     var lastDayOfCurrent = daysInMonth(asOf.year, asOf.month);
     var currentIsInProgress = asOf.day < lastDayOfCurrent;
     var currentIncludedInTrend = referenceMonth === monthKey(asOf.year, asOf.month);
@@ -375,6 +383,7 @@
       base: base,
       trendR4: trendR4,
       referenceMonth: referenceMonth,
+      steps: steps,
       series: { bql: bqlSeries, ms: msSeries, md: mdSeries, order: ordSeries, hoto: hotoSeries, r1: r1Series, r2: r2Series, r3: r3Series, r4: r4Series },
       months: monthMeta,
       inProgress: inProgress
@@ -425,6 +434,7 @@
     monthKey: monthKey,
     parseMonthKey: parseMonthKey,
     addMonths: addMonths,
+    monthsBetween: monthsBetween,
     parseActionDate: parseActionDate,
     normalizeCity: normalizeCity,
     filterRows: filterRows,

@@ -76,15 +76,32 @@ body {
 }
 .controls.compact {
   padding: 9px 20px;
-  gap: 10px 22px;
+  gap: 10px 20px;
   box-shadow: var(--shadow-md);
   border-radius: var(--radius);
 }
-.controls.compact .control-group label { display: none; }
-.controls.compact .control-group { flex-direction: row; align-items: center; gap: 6px; }
+.controls.compact .control-group { flex-direction: row; align-items: center; gap: 7px; }
+.controls.compact .control-group label {
+  font-size: 10px;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
 .control-group { display: flex; flex-direction: column; gap: 6px; transition: gap .18s ease; }
 .control-group label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); font-weight: 600; }
 .control-group .row { display: flex; align-items: center; gap: 8px; }
+
+/* A non-sticky variant of .controls for filter-like rows inside a tab (e.g. the Historical "view by" toggle) */
+.inline-controls {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
 
 input[type="month"], input[type="date"], input[type="number"], input[type="text"], input[type="password"], select, textarea {
   font-family: var(--font);

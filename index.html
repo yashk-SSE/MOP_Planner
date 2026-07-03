@@ -96,6 +96,7 @@
 
   <!-- SUMMARY -->
   <div class="tab-panel active" id="tab-summary">
+    <p id="plan-banner" style="font-size:13px;color:var(--accent-dark);font-weight:500;margin:0 0 12px;"></p>
     <div class="legend"><span class="swatch"></span> amber = manually overwritten (click any number to edit, clear the box + Enter to revert)</div>
     <div class="card-grid" id="summary-cards"></div>
     <div class="rate-grid" id="summary-rates"></div>
@@ -151,7 +152,7 @@
   <!-- HISTORICAL -->
   <div class="tab-panel" id="tab-historical">
     <p style="font-size:12.5px;color:var(--text-soft);">Raw monthly actuals behind the trend calculation above — use this to sanity-check any number before trusting the projection. Only months actually used in the trend are shown (see the pace box on the Summary tab for a month still too early to include).</p>
-    <div class="controls" style="margin-bottom:12px;">
+    <div class="inline-controls">
       <div class="control-group">
         <label>View by</label>
         <div class="segmented" id="hist-mode">

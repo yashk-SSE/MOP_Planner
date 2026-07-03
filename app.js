@@ -101,8 +101,9 @@
     var universe = getUniverseRows();
     var s = state.settings;
     var asOf = state.asOf;
+    var pm = state.planningMonth;
 
-    var panProj = MOPCore.projectFunnelForRows(universe, s, asOf);
+    var panProj = MOPCore.projectFunnelForRows(universe, s, asOf, pm);
     var panBase = MOPCore.applyInitiativesToBase(panProj.base, initiativesFor('all'));
     var panResolved = MOPCore.resolveFunnel(panBase, state.overrides.panIndia);
 
@@ -112,7 +113,7 @@
     var cities = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
-      var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, panResolved.state.r4);
+      var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, pm, panResolved.state.r4);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('city', city));
       var shareBQL = panResolved.state.BQL * (cityShares[city] || 0);
       var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
@@ -123,7 +124,7 @@
     var subChannels = {};
     MOPCore.SUB_CHANNELS.forEach(function (sc) {
       var scRows = MOPCore.filterRows(universe, { subChannels: [sc] });
-      var proj = MOPCore.projectFunnelForRows(scRows, s, asOf, panResolved.state.r4);
+      var proj = MOPCore.projectFunnelForRows(scRows, s, asOf, pm, panResolved.state.r4);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('subChannel', null, sc));
       var shareBQL = panResolved.state.BQL * (subShares[sc] || 0);
       var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
@@ -132,7 +133,7 @@
     });
 
     var btlRows = MOPCore.filterRows(state.rows, { cities: CITY_NAMES, subChannels: [MOPCore.BTL_CHANNEL] });
-    var referenceMonth = MOPCore.getReferenceMonth(asOf);
+    var referenceMonth = MOPCore.getReferenceMonth(asOf, s.minDaysForCurrentMonth);
     var lp = MOPCore.parseMonthKey(referenceMonth);
     var btlFig = { totals: MOPCore.sumMonth(btlRows, lp.year, lp.month, null) };
 
@@ -224,6 +225,10 @@
   function renderSummary() {
     var r = last.panIndia.state, flags = last.panIndia.flags;
     var prevMonthKey = last.panProj.months[last.panProj.months.length - 1].monthKey;
+    var steps = last.panProj.steps;
+    var planBanner = document.getElementById('plan-banner');
+    planBanner.innerHTML = 'Projecting <strong>' + state.planningMonth + '</strong>' +
+      (steps > 1 ? ' &mdash; ' + steps + ' months ahead of the last usable data (' + last.panProj.referenceMonth + '), so momentum is extrapolated ' + steps + ' steps forward' : ' &mdash; 1 month ahead of the last usable data (' + last.panProj.referenceMonth + ')');
     var cardGrid = document.getElementById('summary-cards');
     cardGrid.innerHTML = '';
     var seriesKeyFor = { BQL: 'bql', MS: 'ms', MD: 'md', Order: 'order', HOTO: 'hoto' };

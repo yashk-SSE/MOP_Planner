@@ -3,7 +3,10 @@
 Monthly operating plan dashboard for SolarSquare's Referral channel. Static site, no build step — deploy as-is via GitHub Pages.
 
 ## Layout
-Tabs live in a sticky left sidebar (always visible, current tab highlighted) and the filter bar sticks to the top of the viewport, shrinking to a compact single row once you scroll past it — so both "which tab am I on" and "what are the current filters" stay visible no matter how far down a long table you've scrolled.
+Tabs live in a sticky left sidebar (always visible, current tab highlighted) and the filter bar sticks to the top of the viewport, shrinking to a compact single row once you scroll past it — labels stay visible (just shown inline instead of stacked) so it's still clear what each compacted field is.
+
+## Planning month vs. data as-of
+These do two different jobs: **data as-of** determines which months are complete enough to trust (see below); **planning month** determines how many months of momentum to extrapolate from that data. Projecting 2 months out compounds the trend twice, not once — the banner above the summary cards always states the exact month and step count being used, so a number that looks off can be traced back to it immediately.
 
 ## Files
 - `index.html` — page shell and layout
