@@ -461,22 +461,42 @@
   // ---------------- Rendering: Historical (verification) ----------------
   var histMode = 'city';
   var ALL_HIST_SUBCHANNELS = MOPCore.SUB_CHANNELS.concat(['BTL']);
-  var histSubChannelSelection = ALL_HIST_SUBCHANNELS.slice(); // all selected by default
+  var histSubChannelSelection = MOPCore.SUB_CHANNELS.slice(); // BTL starts off; it's an opt-in extra, not part of any official total
 
   function histSource(key) {
     return key === 'BTL' ? { proj: last.btlHistProj } : last.subChannels[key];
   }
 
+  function isFullDefaultSelection(sel) {
+    if (sel.indexOf('BTL') !== -1) return false;
+    if (sel.length !== MOPCore.SUB_CHANNELS.length) return false;
+    return MOPCore.SUB_CHANNELS.every(function (c) { return sel.indexOf(c) !== -1; });
+  }
+
+  // Recomputes one city's trend using only the selected sub-channels
+  // (rather than the city's full, all-channel total) — purely for this
+  // tab; never touches the official projection used everywhere else.
+  function computeCityHistProj(city, selection) {
+    var rows = [];
+    var nonBtl = selection.filter(function (c) { return c !== 'BTL'; });
+    if (nonBtl.length > 0) {
+      rows = rows.concat(MOPCore.filterRows(getUniverseRows(), { cities: [city], subChannels: nonBtl }));
+    }
+    if (selection.indexOf('BTL') !== -1) {
+      rows = rows.concat(MOPCore.filterRows(state.rows, { cities: [city], subChannels: [MOPCore.BTL_CHANNEL] }));
+    }
+    return MOPCore.projectFunnelForRows(rows, state.settings, state.asOf, state.planningMonth);
+  }
+
   function renderHistorical() {
-    var pickerWrap = document.getElementById('hist-subchannel-picker');
-    pickerWrap.style.display = histMode === 'subchannel' ? 'flex' : 'none';
+    document.getElementById('hist-subchannel-picker').style.display = 'flex';
 
     var keys = histMode === 'city' ? CITY_NAMES : histSubChannelSelection;
     var label = histMode === 'city' ? 'City' : 'Sub-channel';
     var tbodyVol = document.getElementById('hist-vol-tbody');
     var tbodyRate = document.getElementById('hist-rate-tbody');
 
-    if (keys.length === 0) {
+    if (histSubChannelSelection.length === 0) {
       document.getElementById('hist-vol-thead').innerHTML = '';
       document.getElementById('hist-rate-thead').innerHTML = '';
       tbodyVol.innerHTML = '<tr><td style="color:var(--text-mute);">Select at least one sub-channel above to see its history.</td></tr>';
@@ -484,8 +504,26 @@
       return;
     }
 
-    var source = histMode === 'city' ? function (k) { return last.cities[k]; } : histSource;
+    var source;
+    if (histMode === 'city') {
+      var useDefault = isFullDefaultSelection(histSubChannelSelection);
+      var cityCache = {};
+      source = function (k) {
+        if (useDefault) return last.cities[k];
+        if (!cityCache[k]) cityCache[k] = { proj: computeCityHistProj(k, histSubChannelSelection) };
+        return cityCache[k];
+      };
+    } else {
+      source = histSource;
+    }
     var months = source(keys[0]).proj.months.map(function (m) { return m.monthKey; });
+    var filterNote = document.getElementById('hist-filter-note');
+    if (histMode === 'city' && !isFullDefaultSelection(histSubChannelSelection)) {
+      filterNote.textContent = 'Showing city totals for only: ' + histSubChannelSelection.join(', ');
+      filterNote.style.display = 'block';
+    } else {
+      filterNote.style.display = 'none';
+    }
 
     renderHistoricalTable('hist-vol-thead', 'hist-vol-tbody', months, label, keys, source,
       [{ k: 'bql', label: 'BQL', pct: false }, { k: 'ms', label: 'MS', pct: false }, { k: 'md', label: 'MD', pct: false }, { k: 'order', label: 'Order', pct: false }, { k: 'hoto', label: 'HOTO', pct: false }]);
@@ -533,7 +571,8 @@
       var id = 'hist-sc-' + sc.replace(/[^a-zA-Z0-9]/g, '');
       var label = document.createElement('label');
       label.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 10px;border:1.5px solid var(--border);border-radius:999px;background:#fbfcfe;cursor:pointer;';
-      label.innerHTML = '<input type="checkbox" id="' + id + '" checked style="margin:0;" /> ' + sc + (sc === 'BTL' ? ' (excl.)' : '');
+      var isChecked = histSubChannelSelection.indexOf(sc) !== -1;
+      label.innerHTML = '<input type="checkbox" id="' + id + '" ' + (isChecked ? 'checked' : '') + ' style="margin:0;" /> ' + sc + (sc === 'BTL' ? ' (add reference)' : '');
       label.querySelector('input').addEventListener('change', function (e) {
         var idx = histSubChannelSelection.indexOf(sc);
         if (e.target.checked && idx === -1) histSubChannelSelection.push(sc);
@@ -732,7 +771,8 @@
   }
 
   function exportExcelFile() {
-    if (!last || typeof XLSX === 'undefined') { toast('Excel library not loaded yet, try again in a moment.', true); return; }
+    if (!last) { toast('Data not loaded yet.', true); return; }
+    if (typeof XLSX === 'undefined') { toast('Excel library failed to load (check network/ad-blocker), then refresh and retry.', true); return; }
     var s = state.settings;
     var pm = state.planningMonth;
     var pmp = MOPCore.parseMonthKey(pm);
