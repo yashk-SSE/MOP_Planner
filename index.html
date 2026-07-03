@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MOP Planner — SolarSquare Referral</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <div class="app-header">
+    <h1>MOP Planner</h1>
+    <div class="sub">SolarSquare Energy — Referral channel · monthly operating plan</div>
+    <div id="data-status" class="data-status">Loading…</div>
+    <div id="upload-fallback" style="display:none;margin-top:8px;">
+      <input type="file" id="file-input" accept="application/json" />
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>Planning month</label>
+      <input type="month" id="planning-month" />
+    </div>
+    <div class="control-group">
+      <label>Data as-of</label>
+      <input type="date" id="asof-date" />
+    </div>
+    <div class="control-group">
+      <label>Trailing months (n)</label>
+      <input type="number" id="trailing-n" min="1" max="12" style="width:60px;" />
+    </div>
+    <div class="control-group">
+      <label>BQL field</label>
+      <div class="segmented" id="bql-field">
+        <button data-val="BQL_New">New</button>
+        <button data-val="BQL_Old">Old</button>
+      </div>
+    </div>
+    <div class="control-group">
+      <label>MS field</label>
+      <div class="segmented" id="ms-field">
+        <button data-val="First_MS">First</button>
+        <button data-val="Total_MS">Total</button>
+      </div>
+    </div>
+    <div class="control-group">
+      <label>MD field</label>
+      <div class="segmented" id="md-field">
+        <button data-val="First_MD">First</button>
+        <button data-val="Total_MD">Total</button>
+      </div>
+    </div>
+    <div class="control-group">
+      <label>Order→HOTO mode</label>
+      <div class="row">
+        <div class="segmented" id="hoto-mode">
+          <button data-val="policy">Policy</button>
+          <button data-val="trend">Trend</button>
+        </div>
+        <input type="number" id="hoto-policy-rate" min="0" max="100" step="0.5" style="width:60px;" />
+        <span style="color:var(--text-mute);font-size:12px;">%</span>
+      </div>
+    </div>
+    <div class="control-group" style="margin-left:auto;justify-content:flex-end;">
+      <label>&nbsp;</label>
+      <div class="row">
+        <button class="btn" id="export-json">Export JSON</button>
+        <button class="btn primary" id="save-version">Save version</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="active" data-tab="summary">Summary</button>
+    <button data-tab="cities">Cities</button>
+    <button data-tab="subchannels">Sub-Channels</button>
+    <button data-tab="cross">City × Sub-Channel</button>
+    <button data-tab="initiatives">Initiatives</button>
+    <button data-tab="settings">Settings</button>
+  </div>
+
+  <!-- SUMMARY -->
+  <div class="tab-panel active" id="tab-summary">
+    <div class="legend"><span class="swatch"></span> amber = manually overwritten (click any number to edit, clear the box + Enter to revert)</div>
+    <div class="card-grid" id="summary-cards"></div>
+    <div class="rate-grid" id="summary-rates"></div>
+    <p style="font-size:12.5px;color:var(--text-soft);margin:0 0 8px;">Trailing months feeding this projection:</p>
+    <div class="month-strip" id="month-strip"></div>
+  </div>
+
+  <!-- CITIES -->
+  <div class="tab-panel" id="tab-cities">
+    <div class="legend"><span class="swatch"></span> amber = manually overwritten</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th><th>City</th><th>BQL</th><th>MS</th><th>MD</th><th>Order</th><th>HOTO</th>
+            <th>BQL→MS%</th><th>MS→MD%</th><th>MD→Order%</th><th>Order→HOTO%</th><th>BQL→HOTO%</th>
+          </tr>
+        </thead>
+        <tbody id="cities-tbody"></tbody>
+      </table>
+    </div>
+    <p id="cities-reconcile" style="font-size:12px;color:var(--text-soft);"></p>
+  </div>
+
+  <!-- SUB-CHANNELS -->
+  <div class="tab-panel" id="tab-subchannels">
+    <div class="legend"><span class="swatch"></span> amber = manually overwritten</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Sub-channel</th><th>BQL</th><th>MS</th><th>MD</th><th>Order</th><th>HOTO</th>
+            <th>BQL→MS%</th><th>MS→MD%</th><th>MD→Order%</th><th>Order→HOTO%</th><th>BQL→HOTO%</th>
+          </tr>
+        </thead>
+        <tbody id="subchannels-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- CROSS TAB -->
+  <div class="tab-panel" id="tab-cross">
+    <p style="font-size:12.5px;color:var(--text-soft);">BQL is split by each sub-channel's historical share within the city; Order is allocated by historical Order/BQL ratio and normalised to the city's total; HOTO = Order × the applied Order→HOTO rate. No independent MS/MD funnel is computed at this intersection (matches the existing MOP methodology — most cells have too little volume for a reliable independent funnel).</p>
+    <div class="table-wrap">
+      <table>
+        <thead id="cross-thead"></thead>
+        <tbody id="cross-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- INITIATIVES -->
+  <div class="tab-panel" id="tab-initiatives">
+    <form class="initiative-form" id="initiative-form">
+      <div class="full">
+        <label style="font-size:12px;color:var(--text-soft);">Name</label>
+        <input type="text" name="name" placeholder="e.g. Achievable stretch improvement" style="width:100%;" />
+      </div>
+      <div class="full">
+        <label style="font-size:12px;color:var(--text-soft);">Description (one-liner)</label>
+        <input type="text" name="description" placeholder="e.g. +1pp BQL→MS, achievable per past ramp-up" style="width:100%;" />
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-soft);">Scope</label>
+        <select name="scope" id="initiative-scope" style="width:100%;">
+          <option value="all">All cities & sub-channels</option>
+          <option value="city">Single city</option>
+          <option value="subChannel">Single sub-channel</option>
+        </select>
+      </div>
+      <div id="scope-city-wrap" style="display:none;">
+        <label style="font-size:12px;color:var(--text-soft);">City</label>
+        <select name="scopeCity" style="width:100%;"></select>
+      </div>
+      <div id="scope-subchannel-wrap" style="display:none;">
+        <label style="font-size:12px;color:var(--text-soft);">Sub-channel</label>
+        <select name="scopeSubChannel" style="width:100%;"></select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-soft);">Metric affected</label>
+        <select name="metric" style="width:100%;">
+          <option value="BQL">BQL</option>
+          <option value="r1">BQL→MS %</option>
+          <option value="MS">MS</option>
+          <option value="r2">MS→MD %</option>
+          <option value="MD">MD</option>
+          <option value="r3">MD→Order %</option>
+          <option value="Order">Order</option>
+          <option value="r4">Order→HOTO %</option>
+          <option value="HOTO">HOTO</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-soft);">Impact type</label>
+        <select name="impactType" style="width:100%;">
+          <option value="absolute">Absolute (count, or pp for rates)</option>
+          <option value="percent">% uplift</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-soft);">Impact value</label>
+        <input type="number" name="impactValue" step="0.1" placeholder="e.g. 2" style="width:100%;" />
+      </div>
+      <div class="full">
+        <button type="button" class="btn primary" id="add-initiative">Add initiative</button>
+      </div>
+    </form>
+    <div class="initiative-list" id="initiative-list"></div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="tab-panel" id="tab-settings">
+    <div class="settings-block">
+      <h3>Campaign months</h3>
+      <p class="hint">Flagged months stay included in every trend/average — they're not excluded — but are visibly tagged wherever they feed a projection.</p>
+      <div id="campaign-months" style="display:flex;flex-wrap:wrap;gap:10px;"></div>
+    </div>
+
+    <div class="settings-block">
+      <h3>GitHub — save versions</h3>
+      <p class="hint">One-time setup: create a fine-grained personal access token scoped only to this repo, with Contents: Read & write. It's stored only in this browser (localStorage), never in the repo.</p>
+      <div class="field"><label>Repo owner</label><input type="text" id="gh-owner" /></div>
+      <div class="field"><label>Repo name</label><input type="text" id="gh-repo" /></div>
+      <div class="field"><label>Personal access token</label><input type="password" id="gh-token" placeholder="github_pat_…" /></div>
+      <button class="btn" id="gh-save-settings">Save to this browser</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+<script>
+  // Populate initiative scope dropdowns once the DOM is ready
+  document.addEventListener('DOMContentLoaded', function () {
+    var citySel = document.querySelector('[name=scopeCity]');
+    var scSel = document.querySelector('[name=scopeSubChannel]');
+    MOPCore.CITIES.forEach(function (c) {
+      var o = document.createElement('option'); o.value = c.name; o.textContent = c.name; citySel.appendChild(o);
+    });
+    MOPCore.SUB_CHANNELS.forEach(function (sc) {
+      var o = document.createElement('option'); o.value = sc; o.textContent = sc; scSel.appendChild(o);
+    });
+  });
+</script>
+</body>
+</html>
