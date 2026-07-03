@@ -196,7 +196,7 @@
     el.addEventListener('click', function () {
       if (el.querySelector('input')) return;
       var raw = getValue();
-      var display = isPercent ? (raw * 100).toFixed(2) : Math.round(raw);
+      var display = isPercent ? (raw * 100).toFixed(1) : Math.round(raw);
       el.innerHTML = '';
       var input = document.createElement('input');
       input.type = 'text';
@@ -685,6 +685,52 @@
     return MONTH_NAMES[p.month - 1] + " '" + String(p.year).slice(2);
   }
 
+  // ---------------- Excel styling ----------------
+  var XLTHEME = { blue: '149DE1', blueDark: '0F7FB8', light: 'EAF6FD', border: 'C7D3E0', muted: '8A94A6' };
+  var XL_BORDER = { style: 'thin', color: { rgb: XLTHEME.border } };
+  var XL_ALL_BORDERS = { top: XL_BORDER, bottom: XL_BORDER, left: XL_BORDER, right: XL_BORDER };
+  var XL_STYLES = {
+    title: { font: { bold: true, sz: 13, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: XLTHEME.blueDark } }, alignment: { vertical: 'center' } },
+    subtitle: { font: { italic: true, sz: 9, color: { rgb: XLTHEME.muted } } },
+    section: { font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: XLTHEME.blue } }, border: XL_ALL_BORDERS, alignment: { vertical: 'center' } },
+    header: { font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: XLTHEME.blue } }, border: XL_ALL_BORDERS, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } },
+    data: { border: XL_ALL_BORDERS, font: { sz: 10 } },
+    total: { border: XL_ALL_BORDERS, font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: XLTHEME.light } } },
+    muted: { border: XL_ALL_BORDERS, font: { italic: true, sz: 9, color: { rgb: XLTHEME.muted } } },
+    plain: null
+  };
+
+  function makeSheetBuilder() {
+    var rows = [], meta = [];
+    return {
+      push: function (row, type, pctCols, numCols) { rows.push(row); meta.push({ type: type || 'data', pctCols: pctCols || [], numCols: numCols || [] }); return rows.length - 1; },
+      rows: rows,
+      meta: meta
+    };
+  }
+
+  function buildStyledSheet(b, colWidths, merges) {
+    var ws = XLSX.utils.aoa_to_sheet(b.rows);
+    var range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+    if (range) {
+      b.meta.forEach(function (m, r) {
+        var style = XL_STYLES[m.type];
+        for (var c = range.s.c; c <= range.e.c; c++) {
+          var addr = XLSX.utils.encode_cell({ r: r, c: c });
+          if (style) {
+            if (!ws[addr]) ws[addr] = { t: 's', v: '' };
+            ws[addr].s = style;
+          }
+          if (ws[addr] && m.pctCols.indexOf(c) !== -1) ws[addr].z = '0.0%';
+          if (ws[addr] && m.numCols.indexOf(c) !== -1) ws[addr].z = '#,##0';
+        }
+      });
+    }
+    if (colWidths) ws['!cols'] = colWidths.map(function (w) { return { wch: w }; });
+    if (merges) ws['!merges'] = merges;
+    return ws;
+  }
+
   function exportExcelFile() {
     if (!last || typeof XLSX === 'undefined') { toast('Excel library not loaded yet, try again in a moment.', true); return; }
     var s = state.settings;
@@ -692,84 +738,86 @@
     var pmp = MOPCore.parseMonthKey(pm);
     var monthName = MONTH_NAMES[pmp.month - 1];
     var pan = last.panIndia.state;
-
     var wb = XLSX.utils.book_new();
 
     // ---- Summary ----
     var trailingLabels = last.panProj.months.map(function (m) { return monthKeyLabel(m.monthKey); });
-    var summaryRows = [
-      ['SolarSquare Energy \u2013 ' + monthName + ' ' + pmp.year + ' MOP Summary'],
-      ['Projection basis: trailing ' + s.trailingMonths + ' complete months (' + trailingLabels.join(', ') + ') \u00b7 fields: BQL=' + s.bqlField + ', MS=' + s.msField + ', MD=' + s.mdField + ' \u00b7 Order\u2192HOTO: ' + (s.orderHotoMode === 'policy' ? 'policy ' + (s.orderHotoPolicyRate * 100).toFixed(1) + '%' : 'trend') + ' \u00b7 data as of ' + asOfToMonthInput(state.asOf)],
-      [],
-      ['Sub-Channel Summary (excl. BTL)'],
-      ['Sub-Channel', 'BQL', 'MS', 'MD', 'Order', 'HOTO']
-    ];
+    var sb = makeSheetBuilder();
+    sb.push(['SolarSquare Energy \u2013 ' + monthName + ' ' + pmp.year + ' MOP Summary', '', '', '', '', ''], 'title');
+    sb.push(['Projection basis: trailing ' + s.trailingMonths + ' complete months (' + trailingLabels.join(', ') + ') \u00b7 fields: BQL=' + s.bqlField + ', MS=' + s.msField + ', MD=' + s.mdField + ' \u00b7 Order\u2192HOTO: ' + (s.orderHotoMode === 'policy' ? 'policy ' + (s.orderHotoPolicyRate * 100).toFixed(1) + '%' : 'trend') + ' \u00b7 data as of ' + asOfToMonthInput(state.asOf)], 'subtitle');
+    sb.push([], 'plain');
+    sb.push(['Sub-Channel Summary (excl. BTL)', '', '', '', '', ''], 'section');
+    sb.push(['Sub-Channel', 'BQL', 'MS', 'MD', 'Order', 'HOTO'], 'header');
     MOPCore.SUB_CHANNELS.forEach(function (sc) {
       var st = last.subChannels[sc].resolved.state;
-      summaryRows.push([sc, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO)]);
+      sb.push([sc, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO)], 'data', [], [1, 2, 3, 4, 5]);
     });
-    summaryRows.push(['GRAND TOTAL', round1(pan.BQL), round1(pan.MS), round1(pan.MD), round1(pan.Order), round1(pan.HOTO)]);
-    summaryRows.push([]);
-    summaryRows.push(['Overall Conversion Rates (Pan India excl. BTL)']);
-    summaryRows.push(['Metric', monthName + " '" + String(pmp.year).slice(2) + ' Proj'].concat(trailingLabels.slice().reverse().map(function (l) { return l + ' Actual'; })));
-    ['r1', 'r2', 'r3', 'r4'].forEach(function (rk, idx) {
+    sb.push(['GRAND TOTAL', round1(pan.BQL), round1(pan.MS), round1(pan.MD), round1(pan.Order), round1(pan.HOTO)], 'total', [], [1, 2, 3, 4, 5]);
+    sb.push([], 'plain');
+    sb.push(['Overall Conversion Rates (Pan India excl. BTL)', '', '', '', ''], 'section');
+    var rateHeader = ['Metric', monthName + " '" + String(pmp.year).slice(2) + ' Proj'].concat(trailingLabels.slice().reverse().map(function (l) { return l + ' Actual'; }));
+    sb.push(rateHeader, 'header');
+    ['r1', 'r2', 'r3', 'r4'].forEach(function (rk) {
       var label = { r1: 'BQL\u2192MS %', r2: 'MS\u2192MD %', r3: 'MD\u2192Order %', r4: 'Order\u2192HOTO %' }[rk];
       var row = [label, round4(pan[rk])];
       var series = last.panProj.series[rk].slice().reverse();
       series.forEach(function (v) { row.push(round4(v)); });
-      summaryRows.push(row);
+      var pctCols = row.map(function (_, i) { return i; }).slice(1);
+      sb.push(row, 'data', pctCols, []);
     });
-    summaryRows.push([]);
-    summaryRows.push(['Initiatives applied this month']);
-    if (state.initiatives.length === 0) { summaryRows.push(['(none)']); }
+    sb.push([], 'plain');
+    sb.push(['Initiatives applied this month', '', '', '', '', ''], 'section');
+    if (state.initiatives.length === 0) { sb.push(['(none)'], 'data'); }
     state.initiatives.forEach(function (it) {
       var scopeLabel = it.scope === 'all' ? 'All' : it.scope === 'city' ? ('City: ' + it.scopeCity) : ('Sub-channel: ' + it.scopeSubChannel);
-      summaryRows.push([it.name, scopeLabel, METRIC_LABELS[it.metric], it.impactType, it.impactValue, it.description || '']);
+      sb.push([it.name, scopeLabel, METRIC_LABELS[it.metric], it.impactType, it.impactValue, it.description || ''], 'data');
     });
-    var wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    var wsSummary = buildStyledSheet(sb, [26, 16, 16, 16, 16, 22], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }]);
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
     // ---- Sub-Channel Funnel ----
-    var scRows = [
-      [monthName + ' ' + pmp.year + ' MOP  |  Sub-Channel Funnel (excl. BTL)'],
-      ['Sub-Channel', 'BQL', 'MS', 'MD', 'Order', 'HOTO', 'BQL\u2192MS %', 'MS\u2192MD %', 'MD\u2192Ord %', 'Ord\u2192HOTO %', 'Overall BQL\u2192HOTO %']
-    ];
+    var scb = makeSheetBuilder();
+    scb.push([monthName + ' ' + pmp.year + ' MOP  |  Sub-Channel Funnel (excl. BTL)', '', '', '', '', '', '', '', '', '', ''], 'title');
+    scb.push(['Sub-Channel', 'BQL', 'MS', 'MD', 'Order', 'HOTO', 'BQL\u2192MS %', 'MS\u2192MD %', 'MD\u2192Ord %', 'Ord\u2192HOTO %', 'Overall BQL\u2192HOTO %'], 'header');
     MOPCore.SUB_CHANNELS.forEach(function (sc) {
       var st = last.subChannels[sc].resolved.state;
-      scRows.push([sc, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO), round4(st.r1), round4(st.r2), round4(st.r3), round4(st.r4), round4(MOPCore.safeRate(st.HOTO, st.BQL))]);
+      scb.push([sc, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO), round4(st.r1), round4(st.r2), round4(st.r3), round4(st.r4), round4(MOPCore.safeRate(st.HOTO, st.BQL))], 'data', [6, 7, 8, 9, 10], [1, 2, 3, 4, 5]);
     });
-    scRows.push(['TOTAL (excl. BTL)', round1(pan.BQL), round1(pan.MS), round1(pan.MD), round1(pan.Order), round1(pan.HOTO), round4(pan.r1), round4(pan.r2), round4(pan.r3), round4(pan.r4), round4(MOPCore.safeRate(pan.HOTO, pan.BQL))]);
+    scb.push(['TOTAL (excl. BTL)', round1(pan.BQL), round1(pan.MS), round1(pan.MD), round1(pan.Order), round1(pan.HOTO), round4(pan.r1), round4(pan.r2), round4(pan.r3), round4(pan.r4), round4(MOPCore.safeRate(pan.HOTO, pan.BQL))], 'total', [6, 7, 8, 9, 10], [1, 2, 3, 4, 5]);
     var b = last.btl.totals;
-    scRows.push(['BTL (excluded from projection, reference only)', round1(MOPCore.pick(b, s.bqlField)), round1(MOPCore.pick(b, s.msField)), round1(MOPCore.pick(b, s.mdField)), round1(b.Order), round1(b.HOTO), '', '', '', '', '']);
-    var wsSc = XLSX.utils.aoa_to_sheet(scRows);
+    scb.push(['BTL (excluded from projection, reference only)', round1(MOPCore.pick(b, s.bqlField)), round1(MOPCore.pick(b, s.msField)), round1(MOPCore.pick(b, s.mdField)), round1(b.Order), round1(b.HOTO), '', '', '', '', ''], 'muted', [], [1, 2, 3, 4, 5]);
+    var wsSc = buildStyledSheet(scb, [30, 11, 11, 11, 11, 11, 11, 11, 11, 11, 15], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }]);
     XLSX.utils.book_append_sheet(wb, wsSc, 'Sub-Channel Funnel');
 
     // ---- City Funnel ----
-    var cityRows = [
-      [monthName + ' ' + pmp.year + ' MOP  |  City-Level Funnel (excl. BTL)'],
-      ['Cluster', 'City', 'BQL', 'MS', 'MD', 'Order', 'HOTO', 'BQL\u2192MS %', 'MS\u2192MD %', 'MD\u2192Ord %', 'Ord\u2192HOTO %', 'BQL\u2192HOTO %']
-    ];
+    var cb = makeSheetBuilder();
+    cb.push([monthName + ' ' + pmp.year + ' MOP  |  City-Level Funnel (excl. BTL)', '', '', '', '', '', '', '', '', '', '', ''], 'title');
+    cb.push(['Cluster', 'City', 'BQL', 'MS', 'MD', 'Order', 'HOTO', 'BQL\u2192MS %', 'MS\u2192MD %', 'MD\u2192Ord %', 'Ord\u2192HOTO %', 'BQL\u2192HOTO %'], 'header');
     var cityTotals = { BQL: 0, MS: 0, MD: 0, Order: 0, HOTO: 0 };
     MOPCore.CITIES.forEach(function (c) {
       var st = last.cities[c.name].resolved.state;
       ['BQL', 'MS', 'MD', 'Order', 'HOTO'].forEach(function (k) { cityTotals[k] += st[k]; });
-      cityRows.push([c.cluster, c.name, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO), round4(st.r1), round4(st.r2), round4(st.r3), round4(st.r4), round4(MOPCore.safeRate(st.HOTO, st.BQL))]);
+      cb.push([c.cluster, c.name, round1(st.BQL), round1(st.MS), round1(st.MD), round1(st.Order), round1(st.HOTO), round4(st.r1), round4(st.r2), round4(st.r3), round4(st.r4), round4(MOPCore.safeRate(st.HOTO, st.BQL))], 'data', [7, 8, 9, 10, 11], [2, 3, 4, 5, 6]);
     });
-    cityRows.push(['', 'PAN INDIA TOTAL', round1(cityTotals.BQL), round1(cityTotals.MS), round1(cityTotals.MD), round1(cityTotals.Order), round1(cityTotals.HOTO),
-      round4(MOPCore.safeRate(cityTotals.MS, cityTotals.BQL)), round4(MOPCore.safeRate(cityTotals.MD, cityTotals.MS)), round4(MOPCore.safeRate(cityTotals.Order, cityTotals.MD)), round4(MOPCore.safeRate(cityTotals.HOTO, cityTotals.Order)), round4(MOPCore.safeRate(cityTotals.HOTO, cityTotals.BQL))]);
-    var wsCity = XLSX.utils.aoa_to_sheet(cityRows);
+    cb.push(['', 'PAN INDIA TOTAL', round1(cityTotals.BQL), round1(cityTotals.MS), round1(cityTotals.MD), round1(cityTotals.Order), round1(cityTotals.HOTO),
+      round4(MOPCore.safeRate(cityTotals.MS, cityTotals.BQL)), round4(MOPCore.safeRate(cityTotals.MD, cityTotals.MS)), round4(MOPCore.safeRate(cityTotals.Order, cityTotals.MD)), round4(MOPCore.safeRate(cityTotals.HOTO, cityTotals.Order)), round4(MOPCore.safeRate(cityTotals.HOTO, cityTotals.BQL))],
+      'total', [7, 8, 9, 10, 11], [2, 3, 4, 5, 6]);
+    var wsCity = buildStyledSheet(cb, [12, 16, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11], [{ s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }]);
     XLSX.utils.book_append_sheet(wb, wsCity, 'City Funnel');
 
     // ---- City x Sub-Channel ----
+    var xb = makeSheetBuilder();
+    var totalCols = 2 + MOPCore.SUB_CHANNELS.length * 3 + 3;
+    xb.push([monthName + ' ' + pmp.year + ' MOP | City \u00d7 Sub-Channel Targets (excl. BTL)'].concat(new Array(totalCols - 1).fill('')), 'title');
     var crossHeader1 = ['', ''];
     var crossHeader2 = ['Cluster', 'City'];
     MOPCore.SUB_CHANNELS.forEach(function (sc) { crossHeader1.push(sc, '', ''); crossHeader2.push('BQL', 'Order', 'HOTO'); });
     crossHeader1.push('CITY TOTAL', '', '');
     crossHeader2.push('BQL', 'Order', 'HOTO');
-    var crossRows = [
-      [monthName + ' ' + pmp.year + ' MOP | City \u00d7 Sub-Channel Targets (excl. BTL)'],
-      crossHeader1, crossHeader2
-    ];
+    xb.push(crossHeader1, 'section');
+    xb.push(crossHeader2, 'header');
+    var crossNumCols = [];
+    for (var ci = 2; ci < totalCols; ci++) crossNumCols.push(ci);
     var crossTotals = { BQL: 0, Order: 0, HOTO: 0 };
     MOPCore.CITIES.forEach(function (c) {
       var row = [c.cluster, c.name];
@@ -780,16 +828,21 @@
       var cityTot = last.cities[c.name].resolved.state;
       row.push(round1(cityTot.BQL), round1(cityTot.Order), round1(cityTot.HOTO));
       crossTotals.BQL += cityTot.BQL; crossTotals.Order += cityTot.Order; crossTotals.HOTO += cityTot.HOTO;
-      crossRows.push(row);
+      xb.push(row, 'data', [], crossNumCols);
     });
     var totalRow = ['', 'PAN INDIA TOTAL'];
     MOPCore.SUB_CHANNELS.forEach(function () { totalRow.push('', '', ''); });
     totalRow.push(round1(crossTotals.BQL), round1(crossTotals.Order), round1(crossTotals.HOTO));
-    crossRows.push(totalRow);
-    var wsCross = XLSX.utils.aoa_to_sheet(crossRows);
+    xb.push(totalRow, 'total', [], crossNumCols);
+    var crossWidths = [12, 14].concat(new Array(MOPCore.SUB_CHANNELS.length * 3 + 3).fill(9));
+    var crossMerges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } }];
+    var mc = 2;
+    MOPCore.SUB_CHANNELS.forEach(function () { crossMerges.push({ s: { r: 1, c: mc }, e: { r: 1, c: mc + 2 } }); mc += 3; });
+    crossMerges.push({ s: { r: 1, c: mc }, e: { r: 1, c: mc + 2 } });
+    var wsCross = buildStyledSheet(xb, crossWidths, crossMerges);
     XLSX.utils.book_append_sheet(wb, wsCross, 'CityxSub Channel');
 
-    XLSX.writeFile(wb, monthName + '_MOP_Referral.xlsx');
+    XLSX.writeFile(wb, monthName + '_MOP_Referral.xlsx', { cellStyles: true });
     toast('Downloaded ' + monthName + '_MOP_Referral.xlsx');
   }
   function round1(n) { return Math.round(n * 10) / 10; }

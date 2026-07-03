@@ -8,6 +8,12 @@ Tabs live in a sticky left sidebar (always visible, current tab highlighted) and
 ## Planning month vs. data as-of
 These do two different jobs: **data as-of** determines which months are complete enough to trust (see below); **planning month** determines how many months of momentum to extrapolate from that data. Projecting 2 months out compounds the trend twice, not once — the banner above the summary cards always states the exact month and step count being used, so a number that looks off can be traced back to it immediately.
 
+## Excel export styling
+Uses the same blue theme as the dashboard: dark-blue title bars, blue column headers with white bold text, bordered data cells, light-blue-tinted total rows, and italic muted styling for the BTL reference row. Numbers are formatted as `#,##0` and rates as `0.0%` (real Excel number formats, not rounded text, so they stay usable for further calculation). Styling relies on SheetJS's cell-style writing support — if colors don't render in your version of Excel/LibreOffice, the number formatting will still work regardless; let me know if that happens.
+
+## Percentages
+All rates display at 1 decimal place everywhere — dashboard cards, tables, edit boxes, and the Excel export.
+
 ## Files
 - `index.html` — page shell and layout
 - `styles.css` — light theme, rounded/modern styling built around the SolarSquare logo's blue
@@ -37,5 +43,3 @@ Shows the raw BQL/MS/MD/Order/HOTO and all 4 funnel rates for every trailing mon
 
 ## Version history
 Settings tab lets you store a GitHub personal access token (browser-local only) to save dated snapshots straight to `history/{planning-month}/*.json` in this repo via the GitHub API. "Export JSON" always works with no setup, for a local download instead.
-
-
