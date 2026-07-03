@@ -807,9 +807,26 @@
     setTimeout(function () { t.className = 'toast'; }, 3500);
   }
 
+  function initStickyBehavior() {
+    var controlsBar = document.getElementById('controls-bar');
+    if (!controlsBar) return;
+    function updateHeightVar() {
+      document.documentElement.style.setProperty('--controls-height', controlsBar.offsetHeight + 'px');
+    }
+    function onScroll() {
+      var compact = window.scrollY > 24;
+      controlsBar.classList.toggle('compact', compact);
+      updateHeightVar();
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', updateHeightVar);
+    updateHeightVar();
+  }
+
   // ---------------- Boot ----------------
   document.addEventListener('DOMContentLoaded', function () {
     initEventListeners();
+    initStickyBehavior();
     loadData();
   });
 })();

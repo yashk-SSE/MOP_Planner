@@ -2,6 +2,9 @@
 
 Monthly operating plan dashboard for SolarSquare's Referral channel. Static site, no build step — deploy as-is via GitHub Pages.
 
+## Layout
+Tabs live in a sticky left sidebar (always visible, current tab highlighted) and the filter bar sticks to the top of the viewport, shrinking to a compact single row once you scroll past it — so both "which tab am I on" and "what are the current filters" stay visible no matter how far down a long table you've scrolled.
+
 ## Files
 - `index.html` — page shell and layout
 - `styles.css` — light theme, rounded/modern styling built around the SolarSquare logo's blue

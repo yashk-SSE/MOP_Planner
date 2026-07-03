@@ -22,7 +22,7 @@
     </div>
   </div>
 
-  <div class="controls">
+  <div class="controls" id="controls-bar">
     <div class="control-group">
       <label>Planning month</label>
       <input type="month" id="planning-month" />
@@ -67,7 +67,7 @@
           <button data-val="policy">Policy</button>
           <button data-val="trend">Trend</button>
         </div>
-        <input type="number" id="hoto-policy-rate" min="0" max="100" step="0.5" style="width:60px;" />
+        <input type="number" id="hoto-policy-rate" min="0" max="100" step="0.5" style="width:68px;" />
         <span style="color:var(--text-mute);font-size:12px;">%</span>
       </div>
     </div>
@@ -81,7 +81,8 @@
     </div>
   </div>
 
-  <div class="tabs">
+  <div class="layout">
+  <div class="tabs" id="sidebar-tabs">
     <button class="active" data-tab="summary">Summary</button>
     <button data-tab="cities">Cities</button>
     <button data-tab="subchannels">Sub-Channels</button>
@@ -90,6 +91,8 @@
     <button data-tab="initiatives">Initiatives</button>
     <button data-tab="settings">Settings</button>
   </div>
+
+  <div class="main-content">
 
   <!-- SUMMARY -->
   <div class="tab-panel active" id="tab-summary">
@@ -250,6 +253,9 @@
       <div class="field"><label>Personal access token</label><input type="password" id="gh-token" placeholder="github_pat_…" /></div>
       <button class="btn" id="gh-save-settings">Save to this browser</button>
     </div>
+  </div>
+
+  </div>
   </div>
 
 </div>
