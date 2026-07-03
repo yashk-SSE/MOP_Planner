@@ -37,3 +37,5 @@ Shows the raw BQL/MS/MD/Order/HOTO and all 4 funnel rates for every trailing mon
 
 ## Version history
 Settings tab lets you store a GitHub personal access token (browser-local only) to save dated snapshots straight to `history/{planning-month}/*.json` in this repo via the GitHub API. "Export JSON" always works with no setup, for a local download instead.
+
+
