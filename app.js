@@ -525,15 +525,35 @@
     var universe = getUniverseRows();
     var p2 = MOPCore.parseMonthKey(refMonth);
 
-    function renderGrid(tbodyId, keys, kind, filterFn) {
+    function renderGrid(tbodyId, keys, kind, filterFn, totalLabel) {
       var tbody = document.getElementById(tbodyId);
       tbody.innerHTML = '';
+      var totals = { BQL: 0, MS: 0, MD: 0, Order: 0, HOTO: 0 };
+      var rowsData = [];
       keys.forEach(function (key) {
         var rows = filterFn(key);
         var base = MOPCore.estimateMonthDisplayBase(rows, p2.year, p2.month, state.asOf.day, state.settings, Math.min(6, state.settings.trailingMonths * 2));
         var stored = (state.monthlyOverrides[refMonth] && state.monthlyOverrides[refMonth][kind] && state.monthlyOverrides[refMonth][kind][key]) || {};
         var resolved = MOPCore.resolveFunnel(base, stored);
-        var st = resolved.state, fl = resolved.flags;
+        rowsData.push({ key: key, resolved: resolved });
+        VOL_KEYS.forEach(function (k) { totals[k] += resolved.state[k]; });
+      });
+
+      // Aggregate row first — sum of every row shown, with rates re-derived
+      // from the summed volumes (not averaged), so it stays mathematically
+      // correct and doubles as a quick check that nothing's drifted.
+      var totalRow = document.createElement('tr');
+      totalRow.className = 'total-row';
+      totalRow.innerHTML = '<td>' + totalLabel + '</td>' +
+        VOL_KEYS.map(function (k) { return '<td>' + fmt0(totals[k]) + '</td>'; }).join('') +
+        '<td>' + fmtPct(MOPCore.safeRate(totals.MS, totals.BQL)) + '</td>' +
+        '<td>' + fmtPct(MOPCore.safeRate(totals.MD, totals.MS)) + '</td>' +
+        '<td>' + fmtPct(MOPCore.safeRate(totals.Order, totals.MD)) + '</td>' +
+        '<td>' + fmtPct(MOPCore.safeRate(totals.HOTO, totals.Order)) + '</td>';
+      tbody.appendChild(totalRow);
+
+      rowsData.forEach(function (row) {
+        var key = row.key, st = row.resolved.state, fl = row.resolved.flags;
         var tr = document.createElement('tr');
         tr.innerHTML = '<td>' + key + '</td>' +
           VOL_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmt0(st[k]) + '</td>'; }).join('') +
@@ -559,8 +579,8 @@
       });
     }
 
-    renderGrid('cm-city-tbody', CITY_NAMES, 'city', function (city) { return MOPCore.filterRows(universe, { cities: [city] }); });
-    renderGrid('cm-subchannel-tbody', MOPCore.SUB_CHANNELS, 'subChannel', function (sc) { return MOPCore.filterRows(universe, { subChannels: [sc] }); });
+    renderGrid('cm-city-tbody', CITY_NAMES, 'city', function (city) { return MOPCore.filterRows(universe, { cities: [city] }); }, 'India Total');
+    renderGrid('cm-subchannel-tbody', MOPCore.SUB_CHANNELS, 'subChannel', function (sc) { return MOPCore.filterRows(universe, { subChannels: [sc] }); }, 'Overall (all channels)');
   }
 
   function renderCross() {
