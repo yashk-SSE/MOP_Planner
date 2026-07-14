@@ -2,11 +2,29 @@
 
 Monthly operating plan dashboard for SolarSquare's Referral channel. Static site, no build step — deploy as-is via GitHub Pages.
 
+## How To Use tab
+A plain-language guide built right into the dashboard — no jargon, explains what the five funnel numbers mean, how the trend projection actually works, how editing behaves (the volume-vs-rate distinction is the most important thing to get across), how changes travel between pages, and what every Settings option does. Worth pointing anyone new to the tool here first.
+
 ## Layout
 Tabs live in a sticky left sidebar (always visible, current tab highlighted) and the filter bar sticks to the top of the viewport, shrinking to a compact single row once you scroll past it — labels stay visible (just shown inline instead of stacked) so it's still clear what each compacted field is.
 
 ## Planning month vs. data as-of
 These do two different jobs: **data as-of** determines which months are complete enough to trust (see below); **planning month** determines how many months of momentum to extrapolate from that data. Projecting 2 months out compounds the trend twice, not once — the banner above the summary cards always states the exact month and step count being used, so a number that looks off can be traced back to it immediately.
+
+## Overwrite behavior
+Overriding a **rate** (BQL→MS%, etc.) only changes what's downstream of it — e.g. editing MS→MD% recalculates MD, Order, and HOTO forward, leaving BQL and MS untouched.
+
+Overriding a **volume** (BQL, MS, MD, Order, or HOTO) keeps all four rates exactly as they are and recalculates every other volume to stay consistent with them — forward by multiplying, backward by dividing. So setting HOTO directly back-calculates Order, MD, MS, and BQL using the existing rates, rather than distorting Order→HOTO% to something infeasible like 128%. If you override more than one volume at once, the one closest to HOTO wins as the anchor point.
+
+## How edits flow between pages
+- **Pan-India, City, and Sub-Channel** are all fully editable (volumes and rates).
+- A **Sub-Channel** edit (rate, volume, or an initiative's effect on one) now flows both up and down: it's split across cities by each city's historical share *within that specific channel* and added to MS/MD/Order/HOTO (never BQL — that already has its own top-down share mechanism), and the same total flows into Pan-India's baseline too.
+- A **City** edit stays local — it doesn't ripple to Pan-India or other cities — but if a city has its own direct override on a metric, that always wins over any Sub-Channel share that would otherwise land on it. If a city hasn't touched that specific metric, the Sub-Channel share still applies normally.
+- **City × Sub-Channel** is a read-only, derived view — no direct editing there anymore. To change what it shows, edit the relevant Sub-Channel (it flows down) or City (it's part of that city's total).
+- One known limitation: a Sub-Channel's BQL share is based on Pan-India's BQL *after initiatives but before any direct Pan-India-level override*. In the specific case where Pan-India's BQL itself is manually overridden, City totals (which do reflect that override) and Sub-Channel totals (which don't) can drift apart slightly — a narrow edge case, not the common path.
+
+## Current Month Projection
+A tab that dynamically renames itself to whichever month is your current in-progress reference month (e.g. "July Projection"). While that month is still in progress, its City-level and Sub-Channel-level BQL/MS/MD/Order/HOTO and rates are editable — corrections here replace the automatic seasonally-estimated figure everywhere that month feeds a trend calculation, not just in this tab. Persists across sessions (localStorage) until the month is fully complete, at which point real actuals take over automatically and the correction is simply no longer read.
 
 ## Excel export styling
 Uses the same blue theme as the dashboard: dark-blue title bars, blue column headers with white bold text, bordered data cells, light-blue-tinted total rows, and italic muted styling for the BTL reference row. Numbers are formatted as `#,##0` and rates as `0.0%` (real Excel number formats, not rounded text, so they stay usable for further calculation). Styling relies on SheetJS's cell-style writing support — if colors don't render in your version of Excel/LibreOffice, the number formatting will still work regardless; let me know if that happens.
@@ -42,5 +60,4 @@ Shows the raw BQL/MS/MD/Order/HOTO and all 4 funnel rates for every trailing mon
 "Export Excel" builds a workbook shaped like the existing MOP file (Summary, Sub-Channel Funnel, City Funnel, CityxSub Channel sheets) from the live computed numbers, named `{Month}_MOP_Referral.xlsx`. It's a fresh computation each time, not a template fill — the elaborate prose assumption notes from the original file aren't reproduced verbatim, but the settings used (field mappings, trailing window, Order→HOTO mode, active initiatives) are listed on the Summary sheet instead.
 
 ## Version history
-
 Settings tab lets you store a GitHub personal access token (browser-local only) to save dated snapshots straight to `history/{planning-month}/*.json` in this repo via the GitHub API. "Export JSON" always works with no setup, for a local download instead.
