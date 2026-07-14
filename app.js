@@ -21,8 +21,19 @@
     gitHubToken: localStorage.getItem('mop_gh_token') || '',
     gitHubOwner: localStorage.getItem('mop_gh_owner') || 'yashk-SSE',
     gitHubRepo: localStorage.getItem('mop_gh_repo') || 'MOP_Planner',
-    versions: []
+    versions: [],
+    // Corrections to the current in-progress reference month, made in the
+    // "Current Month Projection" tab. Keyed by monthKey, e.g.
+    // { '2026-07': { city: { Pune: {BQL:...}, ... }, subChannel: { Sales: {...}, ... } } }.
+    // Persists across sessions (localStorage) until that month is fully
+    // complete, at which point real actuals take over automatically and
+    // this is simply no longer read.
+    monthlyOverrides: JSON.parse(localStorage.getItem('mop_monthly_overrides') || '{}')
   };
+
+  function saveMonthlyOverrides() {
+    localStorage.setItem('mop_monthly_overrides', JSON.stringify(state.monthlyOverrides));
+  }
 
   function fmt0(n) { return Math.round(n).toLocaleString('en-IN'); }
   function fmtPct(n, d) { return (n * 100).toFixed(d == null ? 1 : d) + '%'; }
@@ -97,6 +108,35 @@
     });
   }
 
+  // Looks up a stored correction for the given filter (a specific city or
+  // sub-channel) for whichever month is currently the in-progress reference
+  // month. Returns null if there's no correction, or the month is already
+  // fully complete (real actuals apply automatically, corrections are
+  // simply never read once that happens).
+  function getMonthOverride(kind, key) {
+    var refMonth = MOPCore.getReferenceMonth(state.asOf, state.settings.minDaysForCurrentMonth);
+    var monthIsComplete = state.asOf.day >= MOPCore.daysInMonth(state.asOf.year, state.asOf.month) || refMonth !== MOPCore.monthKey(state.asOf.year, state.asOf.month);
+    if (monthIsComplete) return null;
+    var stored = state.monthlyOverrides[refMonth];
+    if (!stored || !stored[kind] || !stored[kind][key]) return null;
+    var override = stored[kind][key];
+    var rows = kind === 'city'
+      ? MOPCore.filterRows(getUniverseRows(), { cities: [key] })
+      : MOPCore.filterRows(getUniverseRows(), { subChannels: [key] });
+    var p = MOPCore.parseMonthKey(refMonth);
+    var base = MOPCore.estimateMonthDisplayBase(rows, p.year, p.month, state.asOf.day, state.settings, Math.min(6, state.settings.trailingMonths * 2));
+    var resolved = MOPCore.resolveFunnel(base, override).state;
+    var totals = {
+      BQL_Old: resolved.BQL, BQL_New: resolved.BQL,
+      First_MS: resolved.MS, Total_MS: resolved.MS,
+      First_MD: resolved.MD, Total_MD: resolved.MD,
+      Order: resolved.Order, HOTO: resolved.HOTO
+    };
+    return { monthKey: refMonth, totals: totals };
+  }
+
+  var DELTA_METRICS = ['MS', 'MD', 'Order', 'HOTO'];
+
   function computeAll() {
     var universe = getUniverseRows();
     var s = state.settings;
@@ -105,31 +145,93 @@
 
     var panProj = MOPCore.projectFunnelForRows(universe, s, asOf, pm);
     var panBase = MOPCore.applyInitiativesToBase(panProj.base, initiativesFor('all'));
-    var panResolved = MOPCore.resolveFunnel(panBase, state.overrides.panIndia);
 
     var cityShares = MOPCore.computeShares(universe, CITY_NAMES, 'city', s.trailingMonths, asOf, s.bqlField, s.minDaysForCurrentMonth);
     var subShares = MOPCore.computeShares(universe, MOPCore.SUB_CHANNELS, 'subChannel', s.trailingMonths, asOf, s.bqlField, s.minDaysForCurrentMonth);
 
+    // --- Sub-Channels first: their edits/initiatives need to be known
+    // before Cities and Pan-India are finalized, since their effect on
+    // MS/MD/Order/HOTO flows into both. ---
+    var subChannels = {};
+    var subChannelDeltas = {}; // { sc: { MS: delta, MD: delta, Order: delta, HOTO: delta } }
+    var cityShareWithinSC = {}; // { sc: { city: share } }
+    MOPCore.SUB_CHANNELS.forEach(function (sc) {
+      var scRows = MOPCore.filterRows(universe, { subChannels: [sc] });
+      var monthOv = getMonthOverride('subChannel', sc);
+      var proj = MOPCore.projectFunnelForRows(scRows, s, asOf, pm, null, monthOv);
+      var pureShareBQL = panBase.BQL * (subShares[sc] || 0); // Pan-India BQL after initiatives, before its own manual overrides — avoids circularity (Pan-India's final state depends on these deltas)
+      var pureBaseline = MOPCore.resolveFunnel(proj.base, { BQL: pureShareBQL }).state;
+
+      var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('subChannel', null, sc));
+      var shareBQL = pureShareBQL; // Sub-Channel BQL still comes from Pan-India's own share — edits here don't feed back into BQL, only MS/MD/Order/HOTO (see delta below)
+      var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
+      var resolved = MOPCore.resolveFunnel(withShare, state.overrides.subChannel[sc] || {});
+
+      var delta = {};
+      DELTA_METRICS.forEach(function (m) { delta[m] = resolved.state[m] - pureBaseline[m]; });
+      subChannelDeltas[sc] = delta;
+      cityShareWithinSC[sc] = MOPCore.computeShares(scRows, CITY_NAMES, 'city', s.trailingMonths, asOf, s.bqlField, s.minDaysForCurrentMonth);
+
+      subChannels[sc] = { base: base, share: subShares[sc] || 0, resolved: resolved, proj: proj, delta: delta };
+    });
+
+    // Pan-India's baseline picks up the sum of every Sub-Channel's delta on
+    // MS/MD/Order/HOTO (added directly, not via resolveFunnel — a volume
+    // override there would incorrectly back-cascade into BQL, which these
+    // deltas are specifically defined not to touch), then Pan-India's own
+    // direct overrides still get final say on top, same as before.
+    var panBaseWithDeltas = Object.assign({}, panBase);
+    var anyPanDelta = false;
+    DELTA_METRICS.forEach(function (m) {
+      var sum = 0;
+      MOPCore.SUB_CHANNELS.forEach(function (sc) { sum += subChannelDeltas[sc][m]; });
+      if (sum !== 0) { panBaseWithDeltas[m] = panBaseWithDeltas[m] + sum; anyPanDelta = true; }
+    });
+    if (anyPanDelta) {
+      panBaseWithDeltas.r1 = MOPCore.safeRate(panBaseWithDeltas.MS, panBaseWithDeltas.BQL);
+      panBaseWithDeltas.r2 = MOPCore.safeRate(panBaseWithDeltas.MD, panBaseWithDeltas.MS);
+      panBaseWithDeltas.r3 = MOPCore.safeRate(panBaseWithDeltas.Order, panBaseWithDeltas.MD);
+      panBaseWithDeltas.r4 = MOPCore.safeRate(panBaseWithDeltas.HOTO, panBaseWithDeltas.Order);
+    }
+    var panResolved = MOPCore.resolveFunnel(panBaseWithDeltas, state.overrides.panIndia);
+
+    // --- Cities: own trend + own BQL share (from Pan-India's now-final
+    // BQL) + own direct overrides, THEN add each Sub-Channel's distributed
+    // delta — skipped for any metric the city has its own direct override
+    // on, since a direct City-level edit always wins. ---
     var cities = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
-      var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, pm, panResolved.state.r4);
+      var monthOv = getMonthOverride('city', city);
+      var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, pm, panResolved.state.r4, monthOv);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('city', city));
       var shareBQL = panResolved.state.BQL * (cityShares[city] || 0);
       var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
       var resolved = MOPCore.resolveFunnel(withShare, state.overrides.city[city] || {});
-      cities[city] = { base: base, ownTrendBQL: proj.base.BQL, share: cityShares[city] || 0, resolved: resolved, proj: proj };
-    });
 
-    var subChannels = {};
-    MOPCore.SUB_CHANNELS.forEach(function (sc) {
-      var scRows = MOPCore.filterRows(universe, { subChannels: [sc] });
-      var proj = MOPCore.projectFunnelForRows(scRows, s, asOf, pm, panResolved.state.r4);
-      var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('subChannel', null, sc));
-      var shareBQL = panResolved.state.BQL * (subShares[sc] || 0);
-      var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
-      var resolved = MOPCore.resolveFunnel(withShare, state.overrides.subChannel[sc] || {});
-      subChannels[sc] = { base: base, share: subShares[sc] || 0, resolved: resolved, proj: proj };
+      var cityOverrides = state.overrides.city[city] || {};
+      var adjusted = Object.assign({}, resolved.state);
+      var adjustedFlags = Object.assign({}, resolved.flags);
+      var anyDistributed = false;
+      DELTA_METRICS.forEach(function (m) {
+        if (cityOverrides[m] != null) return; // direct city override wins, no distributed share added
+        var add = 0;
+        MOPCore.SUB_CHANNELS.forEach(function (sc) { add += subChannelDeltas[sc][m] * (cityShareWithinSC[sc][city] || 0); });
+        if (add !== 0) { adjusted[m] = adjusted[m] + add; anyDistributed = true; }
+      });
+      if (anyDistributed) {
+        // Re-derive rates as plain ratios of the adjusted volumes so the
+        // displayed funnel stays internally consistent (BQL and MS->MD
+        // etc. are left as-is where not directly touched).
+        adjusted.r1 = MOPCore.safeRate(adjusted.MS, adjusted.BQL);
+        adjusted.r2 = MOPCore.safeRate(adjusted.MD, adjusted.MS);
+        adjusted.r3 = MOPCore.safeRate(adjusted.Order, adjusted.MD);
+        adjusted.r4 = MOPCore.safeRate(adjusted.HOTO, adjusted.Order);
+      }
+      cities[city] = {
+        base: base, ownTrendBQL: proj.base.BQL, share: cityShares[city] || 0,
+        resolved: { state: adjusted, flags: adjustedFlags }, proj: proj, receivedSubChannelDelta: anyDistributed
+      };
     });
 
     var btlRows = MOPCore.filterRows(state.rows, { cities: CITY_NAMES, subChannels: [MOPCore.BTL_CHANNEL] });
@@ -140,6 +242,7 @@
     // tab lets you optionally view its raw trend alongside the other channels.
     var btlHistProj = MOPCore.projectFunnelForRows(btlRows, s, asOf, pm);
 
+    // --- City x Sub-Channel: read-only derived view (no direct editing) ---
     var cross = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
@@ -163,12 +266,8 @@
       MOPCore.SUB_CHANNELS.forEach(function (sc) {
         var bqlCell = weights[sc].bqlCell;
         var orderCell = weightSum > 0 ? (weights[sc].w / weightSum) * cityFinal.Order : 0;
-        var key = city + '|' + sc;
-        var ov = state.overrides.cell[key] || {};
-        if (ov.BQL != null) bqlCell = ov.BQL;
-        if (ov.Order != null) orderCell = ov.Order;
         var hotoCell = orderCell * panResolved.state.r4;
-        cross[city][sc] = { BQL: bqlCell, Order: orderCell, HOTO: hotoCell, overridden: { BQL: ov.BQL != null, Order: ov.Order != null } };
+        cross[city][sc] = { BQL: bqlCell, Order: orderCell, HOTO: hotoCell };
       });
     });
 
@@ -186,6 +285,7 @@
     renderCities();
     renderSubChannels();
     renderCross();
+    renderCurrentMonthTab();
     renderHistorical();
     renderInitiatives();
   }
@@ -241,7 +341,7 @@
       card.className = 'metric-card';
       card.innerHTML = '<div class="label">' + METRIC_LABELS[k] + '</div>' +
         '<div class="value ' + (flags[k] ? 'overridden' : '') + '">' + fmt0(r[k]) + '<span class="ref-prev">(' + fmt0(prev) + ')</span></div>' +
-        '<div class="delta">' + (flags[k] === 'derived' ? 'rate back-solved from override' : (flags[k] ? 'manually overwritten' : 'projected \u00b7 ' + prevMonthKey + ' in brackets')) + '</div>';
+        '<div class="delta">' + (flags[k] ? 'manually overwritten \u00b7 rates held fixed' : 'projected \u00b7 ' + prevMonthKey + ' in brackets') + '</div>';
       var valEl = card.querySelector('.value');
       makeEditable(valEl, function () { return r[k]; }, false,
         function (v) { state.overrides.panIndia[k] = v; },
@@ -401,6 +501,68 @@
   }
 
   // ---------------- Rendering: Cross tab ----------------
+  // ---------------- Rendering: Current Month Projection ----------------
+  function renderCurrentMonthTab() {
+    var lastMonthMeta = last.panProj.months[last.panProj.months.length - 1];
+    var refMonth = last.panProj.referenceMonth;
+    var isLive = lastMonthMeta.monthKey === refMonth && (lastMonthMeta.isEstimated === true || lastMonthMeta.isEstimated === 'corrected');
+    var btn = document.getElementById('tab-btn-currentmonth');
+    var note = document.getElementById('current-month-note');
+    var content = document.getElementById('current-month-content');
+
+    if (!isLive) {
+      btn.textContent = 'Current Month';
+      var p = MOPCore.parseMonthKey(refMonth);
+      note.textContent = monthKeyLabel(refMonth) + ' is already fully complete (or too early to include yet) — using straight actuals, nothing to correct here right now.';
+      content.style.display = 'none';
+      return;
+    }
+
+    btn.textContent = monthKeyLabel(refMonth) + ' Projection';
+    note.textContent = monthKeyLabel(refMonth) + ' is still in progress. These are seasonally-estimated figures feeding the trend above — correct any that you know better than the model does, and the correction will be used instead, both here and in every projection that uses ' + refMonth + ' as an input.';
+    content.style.display = 'block';
+
+    var universe = getUniverseRows();
+    var p2 = MOPCore.parseMonthKey(refMonth);
+
+    function renderGrid(tbodyId, keys, kind, filterFn) {
+      var tbody = document.getElementById(tbodyId);
+      tbody.innerHTML = '';
+      keys.forEach(function (key) {
+        var rows = filterFn(key);
+        var base = MOPCore.estimateMonthDisplayBase(rows, p2.year, p2.month, state.asOf.day, state.settings, Math.min(6, state.settings.trailingMonths * 2));
+        var stored = (state.monthlyOverrides[refMonth] && state.monthlyOverrides[refMonth][kind] && state.monthlyOverrides[refMonth][kind][key]) || {};
+        var resolved = MOPCore.resolveFunnel(base, stored);
+        var st = resolved.state, fl = resolved.flags;
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + key + '</td>' +
+          VOL_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmt0(st[k]) + '</td>'; }).join('') +
+          RATE_KEYS.map(function (k) { return '<td data-k="' + k + '" class="' + (fl[k] ? 'cell-overridden' : '') + '">' + fmtPct(st[k]) + '</td>'; }).join('');
+        VOL_KEYS.concat(RATE_KEYS).forEach(function (k) {
+          var isPct = RATE_KEYS.indexOf(k) !== -1;
+          var td = tr.querySelector('td[data-k="' + k + '"]');
+          makeEditable(td, function () { return st[k]; }, isPct,
+            function (v) {
+              state.monthlyOverrides[refMonth] = state.monthlyOverrides[refMonth] || { city: {}, subChannel: {} };
+              state.monthlyOverrides[refMonth][kind][key] = state.monthlyOverrides[refMonth][kind][key] || {};
+              state.monthlyOverrides[refMonth][kind][key][k] = v;
+              saveMonthlyOverrides();
+            },
+            function () {
+              if (state.monthlyOverrides[refMonth] && state.monthlyOverrides[refMonth][kind][key]) {
+                delete state.monthlyOverrides[refMonth][kind][key][k];
+                saveMonthlyOverrides();
+              }
+            });
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    renderGrid('cm-city-tbody', CITY_NAMES, 'city', function (city) { return MOPCore.filterRows(universe, { cities: [city] }); });
+    renderGrid('cm-subchannel-tbody', MOPCore.SUB_CHANNELS, 'subChannel', function (sc) { return MOPCore.filterRows(universe, { subChannels: [sc] }); });
+  }
+
   function renderCross() {
     var thead = document.getElementById('cross-thead');
     var tbody = document.getElementById('cross-tbody');
@@ -412,21 +574,11 @@
       var cellsHtml = '<td>' + city + '</td>';
       MOPCore.SUB_CHANNELS.forEach(function (sc) {
         var cell = last.cross[city][sc];
-        cellsHtml += '<td data-city="' + city + '" data-sc="' + sc + '" data-k="BQL" class="' + (cell.overridden.BQL ? 'cell-overridden' : '') + '">' + fmt0(cell.BQL) + '</td>';
-        cellsHtml += '<td data-city="' + city + '" data-sc="' + sc + '" data-k="Order" class="' + (cell.overridden.Order ? 'cell-overridden' : '') + '">' + fmt0(cell.Order) + '</td>';
-        cellsHtml += '<td>' + fmt0(cell.HOTO) + '</td>';
+        cellsHtml += '<td>' + fmt0(cell.BQL) + '</td><td>' + fmt0(cell.Order) + '</td><td>' + fmt0(cell.HOTO) + '</td>';
       });
       var cityTot = last.cities[city].resolved.state;
       cellsHtml += '<td>' + fmt0(cityTot.BQL) + '</td><td>' + fmt0(cityTot.Order) + '</td><td>' + fmt0(cityTot.HOTO) + '</td>';
       tr.innerHTML = cellsHtml;
-      MOPCore.SUB_CHANNELS.forEach(function (sc) {
-        ['BQL', 'Order'].forEach(function (k) {
-          var td = tr.querySelector('td[data-city="' + city + '"][data-sc="' + sc + '"][data-k="' + k + '"]');
-          makeEditable(td, function () { return last.cross[city][sc][k]; }, false,
-            function (v) { var key = city + '|' + sc; (state.overrides.cell[key] = state.overrides.cell[key] || {})[k] = v; },
-            function () { var key = city + '|' + sc; if (state.overrides.cell[key]) delete state.overrides.cell[key][k]; });
-        });
-      });
       tbody.appendChild(tr);
     });
   }
