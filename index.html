@@ -83,16 +83,146 @@
 
   <div class="layout">
   <div class="tabs" id="sidebar-tabs">
+    <button data-tab="howto">How To Use</button>
     <button class="active" data-tab="summary">Summary</button>
     <button data-tab="cities">Cities</button>
     <button data-tab="subchannels">Sub-Channels</button>
     <button data-tab="cross">City × Sub-Channel</button>
+    <button data-tab="currentmonth" id="tab-btn-currentmonth">Current Month</button>
     <button data-tab="historical">Historical</button>
     <button data-tab="initiatives">Initiatives</button>
     <button data-tab="settings">Settings</button>
   </div>
 
   <div class="main-content">
+
+  <!-- HOW TO USE -->
+  <div class="tab-panel" id="tab-howto">
+    <div class="howto-toc">
+      <a href="#howto-overview">Overview</a>
+      <a href="#howto-fivenumbers">The 5 numbers</a>
+      <a href="#howto-projection">How it guesses next month</a>
+      <a href="#howto-tabs">What each tab is</a>
+      <a href="#howto-editing">How to change a number</a>
+      <a href="#howto-flow">Where changes travel</a>
+      <a href="#howto-currentmonth">Fixing the current month</a>
+      <a href="#howto-initiatives">Initiatives</a>
+      <a href="#howto-settings">Settings, explained</a>
+      <a href="#howto-faq">Common questions</a>
+    </div>
+
+    <div class="howto-section" id="howto-overview">
+      <h3>What this dashboard does</h3>
+      <p>This tool helps you plan how many leads, meetings, orders, and installations you can expect next month — using patterns from the last few months of real data, not guesswork. You can look at the whole company, one city, one referral channel, or a specific combination of both. And wherever the automatic plan doesn't feel right, you can adjust it by hand — nothing here is locked.</p>
+    </div>
+
+    <div class="howto-section" id="howto-fivenumbers">
+      <h3>The 5 numbers we track</h3>
+      <p>Every lead moves through five stages, always in this order:</p>
+      <div class="flow-diagram">
+        <div class="flow-box"><div class="name">BQL</div><div class="desc">A new lead comes in</div></div>
+        <div class="flow-arrow">→<div class="rate">rate %</div></div>
+        <div class="flow-box"><div class="name">MS</div><div class="desc">Meeting gets booked</div></div>
+        <div class="flow-arrow">→<div class="rate">rate %</div></div>
+        <div class="flow-box"><div class="name">MD</div><div class="desc">Meeting actually happens</div></div>
+        <div class="flow-arrow">→<div class="rate">rate %</div></div>
+        <div class="flow-box"><div class="name">Order</div><div class="desc">They decide to go ahead</div></div>
+        <div class="flow-arrow">→<div class="rate">rate %</div></div>
+        <div class="flow-box"><div class="name">HOTO</div><div class="desc">Installed & handed over</div></div>
+      </div>
+      <p>Between each stage we track a percentage — how many people at one stage make it to the next. We call these the <strong>funnel rates</strong>. For example, if 100 leads come in and 60 of them get a meeting booked, that's a 60% BQL→MS rate.</p>
+    </div>
+
+    <div class="howto-section" id="howto-projection">
+      <h3>How we guess next month's numbers</h3>
+      <p>Nothing here is pulled out of thin air. This is the actual process, every time:</p>
+      <ol>
+        <li>Look back at your last few complete months (3 by default — you can change this in Settings).</li>
+        <li>Work out the average level, and whether things have been trending up or down.</li>
+        <li>Stretch that trend forward to the month you're planning for. Planning 2 months ahead instead of 1 stretches it twice as far.</li>
+        <li>Do this separately for the number of leads (BQL) and for each of the four percentages, then multiply everything through in order to get MS, MD, Order, and HOTO.</li>
+      </ol>
+      <p>If the month you're sitting in right now is still in progress (not finished yet), we estimate what it'll probably add up to by comparing it to how earlier months looked at the same point in time — not just by assuming an even, flat pace across the whole month.</p>
+    </div>
+
+    <div class="howto-section" id="howto-tabs">
+      <h3>What each tab is</h3>
+      <table>
+        <tr><th style="text-align:left;">Tab</th><th style="text-align:left;">What it shows</th></tr>
+        <tr><td><strong>Summary</strong></td><td>The whole-company plan — one set of numbers for everything</td></tr>
+        <tr><td><strong>Cities</strong></td><td>The plan broken down by city</td></tr>
+        <tr><td><strong>Sub-Channels</strong></td><td>The plan broken down by how the lead came in (e.g. Sales, Online)</td></tr>
+        <tr><td><strong>City × Sub-Channel</strong></td><td>Both at once, in a grid — for viewing only, not editing</td></tr>
+        <tr><td><strong>Current Month</strong></td><td>Fix the numbers for the month happening right now, if you know better than the automatic guess</td></tr>
+        <tr><td><strong>Historical</strong></td><td>The real past numbers behind every projection — good for double-checking anything that looks off</td></tr>
+        <tr><td><strong>Initiatives</strong></td><td>Log planned changes (like a campaign or a new team) and see their effect</td></tr>
+        <tr><td><strong>Settings</strong></td><td>Adjust how the calculations work</td></tr>
+      </table>
+    </div>
+
+    <div class="howto-section" id="howto-editing">
+      <h3>How to change a number</h3>
+      <p>Click on any number or percentage, type a new value, and press Enter. It turns <strong style="color:var(--amber-text);">orange</strong> to show you've changed it by hand. To undo it, click it again, clear the box, and press Enter — it goes back to the automatic estimate.</p>
+      <p>There are two different kinds of things you can change, and they behave differently — this is the single most important thing to understand about this tool:</p>
+      <p><strong>If you change a plain number</strong> (BQL, meetings, orders, installs...): the percentages stay exactly as they were, and every <em>other</em> number recalculates to stay consistent with those percentages — both the ones that come before it and the ones that come after it.</p>
+      <div class="example">Example: you think Installs (HOTO) will actually be higher than shown. Type in the new number. Your percentages don't move — instead the tool works backward using those same percentages: recalculating Orders, then Meetings Done, then Meetings Booked, then Leads, so everything still fits together.</div>
+      <p><strong>If you change a percentage:</strong> only what comes <em>after</em> that percentage changes. Everything before it stays exactly the same.</p>
+      <div class="example">Example: improve the "Meeting Booked → Meeting Done" percentage, and Meetings Done, Orders, and Installs all update. But Leads and Meetings Booked themselves don't move, because they come before that step in the chain.</div>
+    </div>
+
+    <div class="howto-section" id="howto-flow">
+      <h3>Where changes travel between pages</h3>
+      <p>Where you make a change matters — some changes stay local, others spread out to everywhere else.</p>
+      <table>
+        <tr><th style="text-align:left;">Where you change it</th><th style="text-align:left;">What it affects</th></tr>
+        <tr><td>Summary (whole company)</td><td>Everything — every city and every channel adjusts to match</td></tr>
+        <tr><td>A specific City</td><td>Just that city. Nothing else moves.</td></tr>
+        <tr><td>A specific Sub-Channel</td><td>Spreads across every city (based on how much each city normally uses that channel), and also updates the whole-company total</td></tr>
+        <tr><td>City × Sub-Channel grid</td><td>Can't be typed into directly — it only shows the result of the City and Sub-Channel numbers combined</td></tr>
+      </table>
+      <p>One more thing worth knowing: if you've changed a City's number by hand, it always wins — even if a Sub-Channel change would normally spread into it, your city number stays exactly as you set it.</p>
+    </div>
+
+    <div class="howto-section" id="howto-currentmonth">
+      <h3>Fixing the current month</h3>
+      <p>The month you're currently in usually isn't finished yet, so the dashboard makes its best guess for how it'll turn out — based on how many days have passed, compared to how earlier months looked at the same point.</p>
+      <p>If you know something the automatic guess doesn't (say, a specific city had an unusually good or bad week), go to the <strong>Current Month</strong> tab and correct it there. That correction is used everywhere this month's data matters for future planning, not just in that one tab. Once the month is completely finished and the real numbers are all in, your correction simply stops being needed — the real numbers take over on their own.</p>
+    </div>
+
+    <div class="howto-section" id="howto-initiatives">
+      <h3>Initiatives</h3>
+      <p>An initiative is your way of saying "we're planning something that should change the numbers" — a marketing push, a bigger sales team, a process improvement — separate from the everyday trend.</p>
+      <p>When you add one, you choose:</p>
+      <ul>
+        <li><strong>Who it affects</strong> — everyone, one city, or one channel</li>
+        <li><strong>What it changes</strong> — a number (like Orders) or a percentage (like Meeting Booked → Meeting Done)</li>
+        <li><strong>How much</strong> — either a percentage increase, or a flat amount</li>
+      </ul>
+      <p>The dashboard folds that into the plan automatically, on top of the regular trend.</p>
+    </div>
+
+    <div class="howto-section" id="howto-settings">
+      <h3>Settings, explained simply</h3>
+      <table>
+        <tr><th style="text-align:left;">Setting</th><th style="text-align:left;">What it does</th></tr>
+        <tr><td>Planning month</td><td>Which future month you're building a plan for</td></tr>
+        <tr><td>Data as-of</td><td>Pretend you're looking at the data as it stood on this date — useful for redoing an old plan</td></tr>
+        <tr><td>Trailing months</td><td>How many past months to average when guessing the trend</td></tr>
+        <tr><td>Min. days to trust current month</td><td>How many days into the current month we wait before using its (still incomplete) numbers at all</td></tr>
+        <tr><td>BQL / MS / MD field</td><td>Which definition of "lead" or "meeting" to count, if your team tracks more than one way</td></tr>
+        <tr><td>Order→HOTO mode</td><td>Whether Order→HOTO uses a fixed percentage you set, or its own trend</td></tr>
+        <tr><td>Campaign months</td><td>Mark a month as unusual (e.g. a marketing campaign) so it's flagged wherever it shows up — this is just a label for your own reference, it doesn't change any numbers by itself</td></tr>
+      </table>
+    </div>
+
+    <div class="howto-section" id="howto-faq">
+      <h3>Common questions</h3>
+      <p><strong>Why did the numbers change when I only changed my Planning Month?</strong><br/>Because how far ahead you're planning changes how far the trend gets stretched forward. Planning 2 months out applies the trend twice; 1 month out applies it once.</p>
+      <p><strong>Why does a small city show a strange 100% or 0%?</strong><br/>Small cities have very few leads, so one or two people moving through the funnel can swing the percentage a lot. It's not a mistake — it's just what happens with small numbers. Check the Historical tab to see the real figures behind it.</p>
+      <p><strong>I changed something and other numbers I didn't touch moved too — is that a bug?</strong><br/>No — that's the tool keeping everything consistent. See "How to change a number" and "Where changes travel" above.</p>
+      <p><strong>How do I completely undo a change?</strong><br/>Click the number, clear the box, press Enter.</p>
+    </div>
+  </div>
 
   <!-- SUMMARY -->
   <div class="tab-panel active" id="tab-summary">
@@ -140,7 +270,7 @@
 
   <!-- CROSS TAB -->
   <div class="tab-panel" id="tab-cross">
-    <p style="font-size:12.5px;color:var(--text-soft);">BQL is split by each sub-channel's historical share within the city; Order is allocated by historical Order/BQL ratio and normalised to the city's total; HOTO = Order × the applied Order→HOTO rate. No independent MS/MD funnel is computed at this intersection (matches the existing MOP methodology — most cells have too little volume for a reliable independent funnel).</p>
+    <p style="font-size:12.5px;color:var(--text-soft);">Read-only, derived view — BQL is split by each sub-channel's historical share within the city; Order is allocated by historical Order/BQL ratio and normalised to the city's total; HOTO = Order × the applied Order→HOTO rate. To influence these numbers, edit the relevant Sub-Channel's rate or volume instead (that flows down into every city here) — editing cells directly here isn't supported, to keep one clear place per kind of change.</p>
     <div class="table-wrap">
       <table>
         <thead id="cross-thead"></thead>
@@ -181,6 +311,32 @@
         <thead id="hist-rate-thead"></thead>
         <tbody id="hist-rate-tbody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- CURRENT MONTH PROJECTION -->
+  <div class="tab-panel" id="tab-currentmonth">
+    <p id="current-month-note" style="font-size:12.5px;color:var(--text-soft);"></p>
+    <div id="current-month-content" style="display:none;">
+      <div class="legend"><span class="swatch"></span> amber = manually corrected (click any number to edit, clear the box + Enter to revert to the automatic estimate)</div>
+      <p style="font-size:12.5px;color:var(--text-soft);font-weight:600;margin:16px 0 8px;">By City</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>City</th><th>BQL</th><th>MS</th><th>MD</th><th>Order</th><th>HOTO</th><th>BQL→MS%</th><th>MS→MD%</th><th>MD→Order%</th><th>Order→HOTO%</th></tr>
+          </thead>
+          <tbody id="cm-city-tbody"></tbody>
+        </table>
+      </div>
+      <p style="font-size:12.5px;color:var(--text-soft);font-weight:600;margin:16px 0 8px;">By Sub-Channel</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Sub-Channel</th><th>BQL</th><th>MS</th><th>MD</th><th>Order</th><th>HOTO</th><th>BQL→MS%</th><th>MS→MD%</th><th>MD→Order%</th><th>Order→HOTO%</th></tr>
+          </thead>
+          <tbody id="cm-subchannel-tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
