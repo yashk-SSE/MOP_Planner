@@ -257,44 +257,91 @@
     return { projected: projected, actualSoFar: actualSoFar, avgFraction: avgFrac, sampleMonths: fractions.length };
   }
 
-  var CHAIN = ['BQL', 'r1', 'MS', 'r2', 'MD', 'r3', 'Order', 'r4', 'HOTO'];
+  // Organic display-shape base ({BQL, r1, MS, ..., HOTO}) for one specific
+  // month, built from seasonally-adjusted per-field estimates. Used by the
+  // Current Month Projection tab as the starting point before any manual
+  // correction is layered on via resolveFunnel.
+  function estimateMonthDisplayBase(rows, year, month, day, settings, lookbackMonths) {
+    var est = {
+      bql: estimateSeasonalPace(rows, year, month, day, settings.bqlField, lookbackMonths).projected,
+      ms: estimateSeasonalPace(rows, year, month, day, settings.msField, lookbackMonths).projected,
+      md: estimateSeasonalPace(rows, year, month, day, settings.mdField, lookbackMonths).projected,
+      ord: estimateSeasonalPace(rows, year, month, day, 'Order', lookbackMonths).projected,
+      hoto: estimateSeasonalPace(rows, year, month, day, 'HOTO', lookbackMonths).projected
+    };
+    var base = { BQL: est.bql };
+    base.r1 = safeRate(est.ms, est.bql);
+    base.MS = est.ms;
+    base.r2 = safeRate(est.md, est.ms);
+    base.MD = est.md;
+    base.r3 = safeRate(est.ord, est.md);
+    base.Order = est.ord;
+    base.r4 = safeRate(est.hoto, est.ord);
+    base.HOTO = est.hoto;
+    return base;
+  }
 
+  var CHAIN = ['BQL', 'r1', 'MS', 'r2', 'MD', 'r3', 'Order', 'r4', 'HOTO'];
+  var VOL_ORDER = ['BQL', 'MS', 'MD', 'Order', 'HOTO'];
+  var RATE_ORDER = ['r1', 'r2', 'r3', 'r4']; // RATE_ORDER[i] sits between VOL_ORDER[i] and VOL_ORDER[i+1]
+
+  // Overriding a RATE changes everything to its right (forward), never
+  // to its left — e.g. setting MS->MD to 90% updates MD/Order/HOTO,
+  // leaves BQL/MS untouched.
+  //
+  // Overriding a VOLUME keeps every rate exactly as it currently is
+  // (never back-solves a rate from a volume edit) and instead
+  // recomputes every OTHER volume from that point — forward by
+  // multiplying, backward by dividing — so the whole chain stays
+  // consistent with the rates you specified. E.g. setting HOTO=2000
+  // recalculates Order, MD, MS, and BQL backward using the existing
+  // rates, rather than distorting Order->HOTO% to an infeasible 128%.
+  //
+  // If more than one volume is overridden at once, the one closest to
+  // HOTO (rightmost in the chain) wins as the anchor point.
   function resolveFunnel(base, overrides) {
     overrides = overrides || {};
-    var state = {};
-    var flags = {};
-    var vol = null;
-    for (var i = 0; i < CHAIN.length; i++) {
-      var key = CHAIN[i];
-      var isVolume = (i % 2 === 0);
-      if (isVolume) {
-        if (key === 'BQL') {
-          state.BQL = (overrides.BQL != null) ? overrides.BQL : base.BQL;
-          flags.BQL = overrides.BQL != null;
-          vol = state.BQL;
-        } else {
-          var rateKey = CHAIN[i - 1];
-          if (overrides[key] != null) {
-            state[key] = overrides[key];
-            flags[key] = true;
-            if (overrides[rateKey] == null) {
-              state[rateKey] = safeRate(state[key], vol);
-              flags[rateKey] = 'derived';
-            }
-          } else {
-            var rate = (overrides[rateKey] != null) ? overrides[rateKey] : state[rateKey];
-            state[key] = vol * rate;
-            flags[key] = false;
-          }
-          vol = state[key];
-        }
-      } else {
-        if (state[key] == null) {
-          state[key] = (overrides[key] != null) ? overrides[key] : base[key];
-          flags[key] = overrides[key] != null;
-        }
-      }
+
+    var rates = {}, rateFlags = {};
+    RATE_ORDER.forEach(function (rk) {
+      rates[rk] = (overrides[rk] != null) ? overrides[rk] : base[rk];
+      rateFlags[rk] = overrides[rk] != null;
+    });
+
+    var overriddenIdx = [];
+    VOL_ORDER.forEach(function (vk, i) { if (overrides[vk] != null) overriddenIdx.push(i); });
+
+    var anchorIdx, anchorVal, anchorIsOverride;
+    if (overriddenIdx.length === 0) {
+      anchorIdx = 0;
+      anchorVal = base.BQL;
+      anchorIsOverride = false;
+    } else {
+      anchorIdx = Math.max.apply(null, overriddenIdx);
+      anchorVal = overrides[VOL_ORDER[anchorIdx]];
+      anchorIsOverride = true;
     }
+
+    var vols = new Array(VOL_ORDER.length);
+    vols[anchorIdx] = anchorVal;
+    for (var i = anchorIdx + 1; i < VOL_ORDER.length; i++) {
+      vols[i] = vols[i - 1] * rates[RATE_ORDER[i - 1]];
+    }
+    for (var j = anchorIdx - 1; j >= 0; j--) {
+      var r = rates[RATE_ORDER[j]];
+      vols[j] = r > 0 ? vols[j + 1] / r : 0;
+    }
+
+    var state = {}, flags = {};
+    VOL_ORDER.forEach(function (vk, i) {
+      state[vk] = vols[i];
+      flags[vk] = (i === anchorIdx) ? anchorIsOverride : false;
+    });
+    RATE_ORDER.forEach(function (rk) {
+      state[rk] = rates[rk];
+      flags[rk] = rateFlags[rk];
+    });
+
     return { state: state, flags: flags };
   }
 
@@ -319,11 +366,22 @@
   // "base" funnel object ready to feed into resolveFunnel(), plus the
   // raw series (for charting / transparency) and which months were
   // campaign-tagged.
-  function projectFunnelForRows(rows, settings, asOf, planningMonth, orderHotoOverrideRate) {
+  function projectFunnelForRows(rows, settings, asOf, planningMonth, orderHotoOverrideRate, monthOverride) {
     var n = settings.trailingMonths;
     var months = buildTrailingSeries(rows, asOf, n, settings.minDaysForCurrentMonth);
     var referenceMonth = getReferenceMonth(asOf, settings.minDaysForCurrentMonth);
     var steps = Math.max(1, monthsBetween(referenceMonth, planningMonth));
+
+    // If the user has manually corrected the in-progress reference month
+    // (via the Current Month Projection tab) with real fields (not just
+    // the display-mapped ones), splice that correction in place of the
+    // seasonally-estimated figure for whichever month it matches.
+    if (monthOverride && monthOverride.totals) {
+      months = months.map(function (m) {
+        return m.monthKey === monthOverride.monthKey ? { monthKey: m.monthKey, totals: monthOverride.totals, isEstimated: 'corrected' } : m;
+      });
+    }
+
     var bqlSeries = [], msSeries = [], mdSeries = [], ordSeries = [], hotoSeries = [];
     var r1Series = [], r2Series = [], r3Series = [], r4Series = [];
     var monthMeta = [];
@@ -444,6 +502,7 @@
     getMonthFigure: getMonthFigure,
     getReferenceMonth: getReferenceMonth,
     estimateSeasonalPace: estimateSeasonalPace,
+    estimateMonthDisplayBase: estimateMonthDisplayBase,
     avg: avg,
     projectVolume: projectVolume,
     projectRate: projectRate,
