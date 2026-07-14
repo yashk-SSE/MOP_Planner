@@ -42,4 +42,5 @@ Shows the raw BQL/MS/MD/Order/HOTO and all 4 funnel rates for every trailing mon
 "Export Excel" builds a workbook shaped like the existing MOP file (Summary, Sub-Channel Funnel, City Funnel, CityxSub Channel sheets) from the live computed numbers, named `{Month}_MOP_Referral.xlsx`. It's a fresh computation each time, not a template fill — the elaborate prose assumption notes from the original file aren't reproduced verbatim, but the settings used (field mappings, trailing window, Order→HOTO mode, active initiatives) are listed on the Summary sheet instead.
 
 ## Version history
+
 Settings tab lets you store a GitHub personal access token (browser-local only) to save dated snapshots straight to `history/{planning-month}/*.json` in this repo via the GitHub API. "Export JSON" always works with no setup, for a local download instead.
