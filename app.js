@@ -547,6 +547,42 @@
       '</tr>';
 
     tbody.innerHTML = '';
+
+    // India (Total) — sum of the raw volumes across every key currently
+    // shown (BTL excluded even if its row is visible, so this always
+    // matches the official pan-India total used everywhere else),
+    // with rates re-derived from the summed volumes rather than
+    // averaged, so they stay mathematically correct.
+    var sumKeys = keys.filter(function (k) { return k !== 'BTL'; });
+    var agg = { bql: [], ms: [], md: [], order: [], hoto: [] };
+    months.forEach(function (m, idx) {
+      var t = { bql: 0, ms: 0, md: 0, order: 0, hoto: 0 };
+      sumKeys.forEach(function (key) {
+        var series = source(key).proj.series;
+        t.bql += series.bql[idx]; t.ms += series.ms[idx]; t.md += series.md[idx];
+        t.order += series.order[idx]; t.hoto += series.hoto[idx];
+      });
+      agg.bql.push(t.bql); agg.ms.push(t.ms); agg.md.push(t.md); agg.order.push(t.order); agg.hoto.push(t.hoto);
+    });
+    var aggSeries = {
+      bql: agg.bql, ms: agg.ms, md: agg.md, order: agg.order, hoto: agg.hoto,
+      r1: agg.bql.map(function (_, i) { return MOPCore.safeRate(agg.ms[i], agg.bql[i]); }),
+      r2: agg.bql.map(function (_, i) { return MOPCore.safeRate(agg.md[i], agg.ms[i]); }),
+      r3: agg.bql.map(function (_, i) { return MOPCore.safeRate(agg.order[i], agg.md[i]); }),
+      r4: agg.bql.map(function (_, i) { return MOPCore.safeRate(agg.hoto[i], agg.order[i]); })
+    };
+    var indiaRow = document.createElement('tr');
+    indiaRow.className = 'total-row';
+    var indiaHtml = '<td>India (Total)</td>';
+    months.forEach(function (m, idx) {
+      metricCols.forEach(function (c, ci) {
+        var v = aggSeries[c.k][idx];
+        indiaHtml += '<td' + (ci === 0 ? ' class="month-sep"' : '') + '>' + (c.pct ? fmtPct(v) : fmt0(v)) + '</td>';
+      });
+    });
+    indiaRow.innerHTML = indiaHtml;
+    tbody.appendChild(indiaRow);
+
     keys.forEach(function (key) {
       var series = source(key).proj.series;
       var tr = document.createElement('tr');
