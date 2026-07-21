@@ -11,6 +11,9 @@ Tabs live in a sticky left sidebar (always visible, current tab highlighted) and
 ## Planning month vs. data as-of
 These do two different jobs: **data as-of** determines which months are complete enough to trust (see below); **planning month** determines how many months of momentum to extrapolate from that data. Projecting 2 months out compounds the trend twice, not once — the banner above the summary cards always states the exact month and step count being used, so a number that looks off can be traced back to it immediately.
 
+## Cities always reconcile with Summary now
+City-level rates now inherit Pan-India's final rates by default, rather than being independently trended from each city's own history. This guarantees the Cities total matches Summary exactly on every metric (BQL, MS, MD, Order, HOTO, and all 4 rates) — before, only BQL was guaranteed to match; MS/MD/Order/HOTO could diverge substantially whenever a city's own historical rate differed from Pan-India's, which was confusing and looked like a bug. A city's own historical rate is still computed and shown in the Historical tab for reference — it's just not auto-applied to the projection anymore. If you know a specific city genuinely converts differently, override that city's rate directly (Cities tab) — same "your override wins" rule as everywhere else, creating a deliberate, visible local deviation while every other city still matches Pan-India.
+
 ## Overwrite behavior
 Overriding a **rate** (BQL→MS%, etc.) only changes what's downstream of it — e.g. editing MS→MD% recalculates MD, Order, and HOTO forward, leaving BQL and MS untouched.
 

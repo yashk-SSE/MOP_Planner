@@ -205,6 +205,24 @@
       var monthOv = getMonthOverride('city', city);
       var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, pm, panResolved.state.r4, monthOv);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('city', city));
+
+      // City rates inherit Pan-India's final rates by default — this is
+      // what guarantees the Cities total always reconciles with Summary
+      // (both on BQL and on every downstream metric), rather than only on
+      // BQL as before. The city's own historical rate is still computed
+      // above (proj) and shown in the Historical tab for reference — it's
+      // just not auto-applied here anymore. Overriding a specific city's
+      // rate (below, via state.overrides.city) still works exactly as
+      // before and creates a deliberate, visible local deviation.
+      base.r1 = panResolved.state.r1;
+      base.r2 = panResolved.state.r2;
+      base.r3 = panResolved.state.r3;
+      base.r4 = panResolved.state.r4;
+      base.MS = base.BQL * base.r1;
+      base.MD = base.MS * base.r2;
+      base.Order = base.MD * base.r3;
+      base.HOTO = base.Order * base.r4;
+
       var shareBQL = panResolved.state.BQL * (cityShares[city] || 0);
       var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
       var resolved = MOPCore.resolveFunnel(withShare, state.overrides.city[city] || {});
@@ -229,7 +247,7 @@
         adjusted.r4 = MOPCore.safeRate(adjusted.HOTO, adjusted.Order);
       }
       cities[city] = {
-        base: base, ownTrendBQL: proj.base.BQL, share: cityShares[city] || 0,
+        base: base, ownTrendBQL: proj.base.BQL, ownTrendRates: { r1: proj.base.r1, r2: proj.base.r2, r3: proj.base.r3, r4: proj.base.r4 }, share: cityShares[city] || 0,
         resolved: { state: adjusted, flags: adjustedFlags }, proj: proj, receivedSubChannelDelta: anyDistributed
       };
     });
