@@ -195,37 +195,50 @@
     }
     var panResolved = MOPCore.resolveFunnel(panBaseWithDeltas, state.overrides.panIndia);
 
-    // --- Cities: own trend + own BQL share (from Pan-India's now-final
-    // BQL) + own direct overrides, THEN add each Sub-Channel's distributed
-    // delta — skipped for any metric the city has its own direct override
-    // on, since a direct City-level edit always wins. ---
+    // --- Cities: each city keeps its OWN historical rate shape, but every
+    // stage gets scaled (multiplicatively) so the volume-weighted average
+    // across all 27 cities lands exactly on Pan-India's rate for that
+    // stage. This keeps real city-to-city variation (Pune ≠ Nagpur) while
+    // still guaranteeing Cities-total reconciles with Summary on every
+    // metric — the same principle as BQL shares, just applied per rate.
     var cities = {};
+    var cityRaw = {};
     CITY_NAMES.forEach(function (city) {
       var cityRows = MOPCore.filterRows(universe, { cities: [city] });
       var monthOv = getMonthOverride('city', city);
       var proj = MOPCore.projectFunnelForRows(cityRows, s, asOf, pm, panResolved.state.r4, monthOv);
       var base = MOPCore.applyInitiativesToBase(proj.base, initiativesFor('city', city));
-
-      // City rates inherit Pan-India's final rates by default — this is
-      // what guarantees the Cities total always reconciles with Summary
-      // (both on BQL and on every downstream metric), rather than only on
-      // BQL as before. The city's own historical rate is still computed
-      // above (proj) and shown in the Historical tab for reference — it's
-      // just not auto-applied here anymore. Overriding a specific city's
-      // rate (below, via state.overrides.city) still works exactly as
-      // before and creates a deliberate, visible local deviation.
-      base.r1 = panResolved.state.r1;
-      base.r2 = panResolved.state.r2;
-      base.r3 = panResolved.state.r3;
-      base.r4 = panResolved.state.r4;
-      base.MS = base.BQL * base.r1;
-      base.MD = base.MS * base.r2;
-      base.Order = base.MD * base.r3;
-      base.HOTO = base.Order * base.r4;
-
       var shareBQL = panResolved.state.BQL * (cityShares[city] || 0);
-      var withShare = MOPCore.resolveFunnel(base, { BQL: shareBQL }).state;
-      var resolved = MOPCore.resolveFunnel(withShare, state.overrides.city[city] || {});
+      cityRaw[city] = { BQL: shareBQL, r1: base.r1, r2: base.r2, r3: base.r3, r4: base.r4, proj: proj, base: base };
+    });
+
+    function stageWeightedAvg(weightKey, rateKey) {
+      var num = 0, den = 0;
+      CITY_NAMES.forEach(function (city) { num += cityRaw[city][weightKey] * cityRaw[city][rateKey]; den += cityRaw[city][weightKey]; });
+      return den > 0 ? num / den : 0;
+    }
+    function normalizeStage(weightKey, rateKey, normKey, targetRate, outVolKey) {
+      var wAvg = stageWeightedAvg(weightKey, rateKey);
+      var factor = wAvg > 0 ? targetRate / wAvg : 1;
+      CITY_NAMES.forEach(function (city) {
+        var r = cityRaw[city];
+        r[normKey] = r[rateKey] * factor;
+        r[outVolKey] = r[weightKey] * r[normKey];
+      });
+    }
+    normalizeStage('BQL', 'r1', 'normR1', panResolved.state.r1, 'MS');
+    normalizeStage('MS', 'r2', 'normR2', panResolved.state.r2, 'MD');
+    normalizeStage('MD', 'r3', 'normR3', panResolved.state.r3, 'Order');
+    normalizeStage('Order', 'r4', 'normR4', panResolved.state.r4, 'HOTO');
+
+    CITY_NAMES.forEach(function (city) {
+      var raw = cityRaw[city];
+      var base = Object.assign({}, raw.base);
+      base.BQL = raw.BQL;
+      base.r1 = raw.normR1; base.r2 = raw.normR2; base.r3 = raw.normR3; base.r4 = raw.normR4;
+      base.MS = raw.MS; base.MD = raw.MD; base.Order = raw.Order; base.HOTO = raw.HOTO;
+
+      var resolved = MOPCore.resolveFunnel(base, state.overrides.city[city] || {});
 
       var cityOverrides = state.overrides.city[city] || {};
       var adjusted = Object.assign({}, resolved.state);
@@ -247,8 +260,8 @@
         adjusted.r4 = MOPCore.safeRate(adjusted.HOTO, adjusted.Order);
       }
       cities[city] = {
-        base: base, ownTrendBQL: proj.base.BQL, ownTrendRates: { r1: proj.base.r1, r2: proj.base.r2, r3: proj.base.r3, r4: proj.base.r4 }, share: cityShares[city] || 0,
-        resolved: { state: adjusted, flags: adjustedFlags }, proj: proj, receivedSubChannelDelta: anyDistributed
+        base: base, ownTrendBQL: raw.proj.base.BQL, ownTrendRates: { r1: raw.proj.base.r1, r2: raw.proj.base.r2, r3: raw.proj.base.r3, r4: raw.proj.base.r4 }, share: cityShares[city] || 0,
+        resolved: { state: adjusted, flags: adjustedFlags }, proj: raw.proj, receivedSubChannelDelta: anyDistributed
       };
     });
 
